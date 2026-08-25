@@ -240,6 +240,7 @@ export type CommerceWorkspaceData = {
     timeline: { label: string; revenue: number; expense: number }[];
     expenseBreakdown: { category: string; value: number; percent: number }[];
     records: { id: string; recordType: "deal" | "expense"; date: string; description: string; category: string; type: "Income" | "Expense"; amount: number }[];
+    accounting: { totals: Record<string, number>; entries: { id: string; date: string; title: string; cashType: string; accountingType: string; amount: number; status: string; counterparty: string | null; dueDate: string | null; voucherNumber: string | null; notes: string | null }[] };
     insights: { tone: "red" | "emerald" | "amber"; title: string; text: string; action: string }[];
   };
   sales: {

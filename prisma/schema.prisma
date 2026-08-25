@@ -39,6 +39,7 @@ model User {
   deals                 Deal[]
   products              Product[]
   expenses              Expense[]
+  financeEntries        FinanceEntry[]
   expenseBudgets        ExpenseBudget[]
   marketingMetrics      MarketingMetric[]
   reviewedFollowUpNotes FollowUpNote[]      @relation("FollowUpNoteReviewer")
@@ -471,6 +472,37 @@ model Expense {
   @@index([expenseDate])
   @@index([deletedAt])
   @@map("expense")
+}
+
+// Detailed accounting context for a Commerce finance transaction. The linked
+// Deal/Expense remains the source for sales and profit calculations; this
+// ledger adds optional accounting fields without changing existing imports.
+model FinanceEntry {
+  id               String    @id @default(cuid())
+  userId           String    @map("user_id")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entryDate        DateTime  @map("entry_date")
+  cashType         String    @map("cash_type") // Income | Expense | Capital
+  accountingType   String    @map("accounting_type") // salary | cogs | payment | receivable | debt | voucher | owner_capital
+  title            String
+  amount           Float
+  status           String    @default("recorded")
+  counterparty     String?
+  dueDate          DateTime? @map("due_date")
+  voucherNumber    String?   @map("voucher_number")
+  paymentMethod    String?   @map("payment_method")
+  notes            String?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+  deletedByUserId  String?   @map("deleted_by_user_id")
+  deletedReason    String?   @map("deleted_reason")
+  restoredAt       DateTime? @map("restored_at")
+  restoredByUserId String?   @map("restored_by_user_id")
+
+  @@index([userId, entryDate])
+  @@index([deletedAt])
+  @@map("finance_entry")
 }
 
 model ExpenseBudget {

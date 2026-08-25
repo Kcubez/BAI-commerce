@@ -67,6 +67,7 @@ export async function GET(req: NextRequest) {
     monthDeals,
     monthExpenses,
     marketingMetrics,
+    financeEntries,
     customers,
     products,
   ] = await Promise.all([
@@ -87,6 +88,10 @@ export async function GET(req: NextRequest) {
     prisma.marketingMetric.findMany({
       where: { ...userWhere, ...notDeleted, metricDate: dateRange },
       orderBy: { metricDate: "asc" },
+    }),
+    prisma.financeEntry.findMany({
+      where: { ...userWhere, ...notDeleted, entryDate: dateRange },
+      orderBy: { entryDate: "desc" },
     }),
     prisma.customer.findMany({
       where: { ...customerOwnedByUserOrAdmin(session), ...notDeleted },
@@ -138,6 +143,10 @@ export async function GET(req: NextRequest) {
       amount: item.amount,
     })),
   ].sort((a, b) => b.date.localeCompare(a.date));
+  const accountingTotals = financeEntries.reduce<Record<string, number>>((totals, entry) => {
+    totals[entry.accountingType] = (totals[entry.accountingType] ?? 0) + entry.amount;
+    return totals;
+  }, {});
 
   const stageMap: Record<string, { label: string; count: number; deals: { id: string; customer: string; amount: number }[] }> = {
     NEW_LEAD: { label: "New Leads", count: 0, deals: [] },
@@ -204,6 +213,10 @@ export async function GET(req: NextRequest) {
       timeline: monthlyTimeline,
       expenseBreakdown,
       records: financeRecords,
+      accounting: {
+        totals: accountingTotals,
+        entries: financeEntries.map((entry) => ({ id: entry.id, date: entry.entryDate.toISOString().slice(0, 10), title: entry.title, cashType: entry.cashType, accountingType: entry.accountingType, amount: entry.amount, status: entry.status, counterparty: entry.counterparty, dueDate: entry.dueDate?.toISOString().slice(0, 10) ?? null, voucherNumber: entry.voucherNumber, notes: entry.notes })),
+      },
       insights: [
         { tone: revenue >= expense ? "emerald" : "red", title: revenue >= expense ? "Revenue growth is healthy" : "Revenue needs attention", text: revenue >= expense ? "Revenue is ahead of total expense for this period." : "Expenses are higher than revenue for this period.", action: "View revenue" },
         { tone: "amber", title: expenseBreakdown[0] ? `${expenseBreakdown[0].category} expense needs review` : "Expense data is ready", text: expenseBreakdown[0] ? `${expenseBreakdown[0].category} is the biggest expense category this period.` : "Expense insights will appear after records are added.", action: "Review expenses" },

@@ -44,6 +44,10 @@ type FinanceRecord = {
   paymentMethod: string;
   reference: string;
   notes: string;
+  accountingType: string;
+  status: string;
+  counterparty: string;
+  dueDate: Date | null;
 };
 
 const COMMERCE_REPORT_MODES = ["demand_report", "customer_service", "finance_transactions", "inventory_import", "marketing_import"] as const;
@@ -62,6 +66,18 @@ function normalizeFinanceCategory(category: string | null | undefined): ExpenseC
   if (/return|refund|loss|damage/.test(value)) return ExpenseCategory.RETURNS_REFUNDS_AND_LOSS;
   if (/operation|admin|office|rent|utility|overhead/.test(value)) return ExpenseCategory.OPERATIONS_AND_OVERHEAD;
   return ExpenseCategory.MISCELLANEOUS;
+}
+
+function normalizeAccountingType(value: string | null | undefined, cashType: string) {
+  const raw = (value || "").toLowerCase();
+  if (/salary|payroll|wage/.test(raw)) return "salary";
+  if (/cogs|cost of goods|inventory/.test(raw)) return "cogs";
+  if (/receiv/.test(raw)) return "receivable";
+  if (/debt|loan|liabilit/.test(raw)) return "debt";
+  if (/voucher/.test(raw)) return "voucher";
+  if (/capital|investment/.test(raw)) return "owner_capital";
+  if (/payment/.test(raw)) return "payment";
+  return cashType.toLowerCase() === "income" ? "payment" : "operating_expense";
 }
 
 function parseFinanceTextRecord(text: string, fallbackDate: Date): FinanceRecord {
@@ -89,6 +105,10 @@ function parseFinanceTextRecord(text: string, fallbackDate: Date): FinanceRecord
     paymentMethod: field(["Payment Method", "Method"]) || "Unknown",
     reference: field(["Reference", "Ref"]) || "",
     notes: field(["Notes", "Note", "မှတ်ချက်"]) || "",
+    accountingType: field(["Accounting Type", "Account Type"]) || "",
+    status: field(["Status"]) || "recorded",
+    counterparty: field(["Counterparty", "Vendor"]) || "",
+    dueDate: parseExcelDate(field(["Due Date"])) || null,
   };
 }
 
@@ -102,6 +122,13 @@ async function createFinanceRecord({
   sourceMessageId?: string | null;
 }) {
   if (record.amount <= 0) return null;
+
+  await prisma.financeEntry.create({ data: {
+    userId, entryDate: record.date, cashType: record.type.toLowerCase() === "income" ? "Income" : "Expense",
+    accountingType: normalizeAccountingType(record.accountingType || record.category, record.type), title: record.description || record.category || "Finance record",
+    amount: record.amount, status: record.status || "recorded", counterparty: record.counterparty || null,
+    dueDate: record.dueDate, voucherNumber: record.reference || null, paymentMethod: record.paymentMethod || null, notes: record.notes || null,
+  }});
 
   if (record.type.toLowerCase() === "income") {
     // No DealItems here: income rows are summaries (e.g. "Product sales week 1"),
@@ -886,6 +913,10 @@ function parseFinanceRecordsSpreadsheet(fileBuffer: Buffer): FinanceRecord[] {
       const payMethod = String(getVal(['Payment Method', 'payment_method']) || '').trim();
       const ref = String(getVal(['Reference', 'reference']) || '').trim();
       const notes = String(getVal(['Notes', 'notes', 'note']) || '').trim();
+      const accountingType = String(getVal(['Accounting Type', 'accounting_type', 'account type']) || '').trim();
+      const status = String(getVal(['Status', 'status']) || '').trim();
+      const counterparty = String(getVal(['Counterparty', 'counterparty', 'vendor']) || '').trim();
+      const dueDate = parseExcelDate(getVal(['Due Date', 'due_date'])) || null;
 
       if (!type) continue;
 
@@ -898,6 +929,10 @@ function parseFinanceRecordsSpreadsheet(fileBuffer: Buffer): FinanceRecord[] {
         paymentMethod: payMethod,
         reference: ref,
         notes,
+        accountingType,
+        status,
+        counterparty,
+        dueDate,
       });
     }
   }

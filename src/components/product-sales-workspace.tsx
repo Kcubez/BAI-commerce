@@ -399,7 +399,10 @@ function FinanceWorkspace({ data, recommendations, isRecommendationsLoading }: {
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [page, setPage] = useState(1);
-  const records = data?.records.map((record) => ({ ...record, amount: `${record.type === 'Income' ? '+' : '-'}${amount(record.amount)}` })) ?? [];
+  const accountingEntries = data?.accounting.entries ?? [];
+  const records = accountingEntries.length
+    ? accountingEntries.map((entry) => ({ id: entry.id, date: entry.date, description: entry.title, category: entry.accountingType.replaceAll('_', ' '), type: entry.cashType === 'Income' ? 'Income' as const : 'Expense' as const, amount: `${entry.cashType === 'Income' ? '+' : '-'}${amount(entry.amount)}` }))
+    : data?.records.map((record) => ({ ...record, amount: `${record.type === 'Income' ? '+' : '-'}${amount(record.amount)}` })) ?? [];
   const filteredRecords = records.filter((record) => (typeFilter === 'All' || record.type === typeFilter) && (categoryFilter === 'All' || record.category === categoryFilter));
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
@@ -410,6 +413,7 @@ function FinanceWorkspace({ data, recommendations, isRecommendationsLoading }: {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Revenue" value={amount(data?.kpis.revenue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Total Expense" value={amount(data?.kpis.expense ?? 0)} unit="MMK" icon={ReceiptText} accentClass="border-l-4 border-l-red-500" /><FinanceKpiCard label="Profit / Loss" value={amount(data?.kpis.profit ?? 0)} unit="MMK" icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /><FinanceKpiCard label="Profit Margin" value={`${(data?.kpis.profitMargin ?? 0).toFixed(1)}%`} icon={Percent} accentClass="border-l-4 border-l-emerald-500" /></div>
+      {accountingEntries.length > 0 && <section className="rounded-xl border-2 border-slate-200 bg-card p-5 shadow-sm dark:border-slate-800"><div className="mb-4"><h2 className="text-base font-black text-slate-900 dark:text-slate-100">Accounting Records</h2><p className="mt-1 text-sm text-muted-foreground">Detailed finance context imported from your Finance spreadsheet.</p></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{[['operating_expense', 'Operating Expenses', ReceiptText, 'border-l-amber-500'], ['receivable', 'Open Receivables', Users, 'border-l-cyan-500'], ['debt', 'Open Debt', Wallet, 'border-l-rose-500'], ['voucher', 'Vouchers', ReceiptText, 'border-l-slate-500']].map(([key, label, Icon, accent]) => <FinanceKpiCard key={key as string} label={label as string} value={amount(data?.accounting.totals[key as string] ?? 0)} unit="MMK" icon={Icon as LucideIcon} accentClass={`border-l-4 ${accent}`} />)}</div></section>}
       <section className="rounded-xl border-2 border-sky-200 bg-sky-50/40 shadow-sm dark:border-sky-900 dark:bg-sky-950/20">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Smart Finance Suggestions</h2><p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Review recommendations based on the selected period.</p></div>
