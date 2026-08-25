@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 
 import {
   AlertTriangle,
@@ -39,6 +40,8 @@ import {
   useSaveCommerceTargets,
 } from '@/hooks/use-commerce-dashboard';
 import type { CommerceActionRecommendation, CommerceDashboard, CommerceDashboardParams, CommerceWorkspaceData } from '@/lib/api';
+import { commerceDashboardKeys } from '@/hooks/use-commerce-dashboard';
+import { trashKeys } from '@/hooks/use-trash';
 import { useDateFilter } from '@/hooks/use-date-filter';
 import {
   AlertDialog,
@@ -488,6 +491,7 @@ function InventoryWorkspace({ data }: { data?: CommerceWorkspaceData['inventory'
 }
 
 export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
+  const queryClient = useQueryClient();
   const {
     period,
     month,
@@ -586,6 +590,9 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
       const result = await response.json() as { count?: number; message?: string };
       if (!response.ok) throw new Error(result.message ?? 'Unable to move records to Trash');
       toast.success(`${result.count ?? 0} ${content[0]} record${result.count === 1 ? '' : 's'} moved to Trash`);
+      // Refresh every workspace view (and Trash) so the deletion shows immediately.
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+      await queryClient.invalidateQueries({ queryKey: trashKeys.all });
       setIsDeleteAllOpen(false);
       setDeleteConfirmText('');
     } catch (error) {

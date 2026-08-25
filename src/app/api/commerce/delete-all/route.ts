@@ -34,28 +34,54 @@ export async function DELETE(req: NextRequest) {
 
   // Optional period scoping so Delete All matches the visible filter range.
   const dateRange = rangeFrom(req.nextUrl.searchParams);
+  const deleteReason = `Deleted all ${workspace} records${dateRange ? ` (${req.nextUrl.searchParams.get("from")} to ${req.nextUrl.searchParams.get("to")})` : ""}`;
+  const data = softDeleteData(session.user.id, deleteReason);
+  const ownerScope = ownedByUserOrAdmin(session);
 
-  const where = {
-    ...ownedByUserOrAdmin(session),
-    ...notDeleted,
-    ...(dateRange
-      ? workspace === "finance"
-        ? { expenseDate: dateRange }
-        : workspace === "marketing"
+  let count = 0;
+
+  if (workspace === "finance") {
+    // Finance revenue comes from WON deals, so Delete All must clear both
+    // sides of the ledger: expenses and won deals (recoverable via Trash).
+    const [expenses, wonDeals] = await Promise.all([
+      prisma.expense.updateMany({
+        where: {
+          ...ownerScope,
+          ...notDeleted,
+          ...(dateRange ? { expenseDate: dateRange } : {}),
+        },
+        data,
+      }),
+      prisma.deal.updateMany({
+        where: {
+          ...ownerScope,
+          ...notDeleted,
+          stage: "WON",
+          ...(dateRange ? { OR: [{ wonAt: dateRange }, { wonAt: null, createdAt: dateRange }] } : {}),
+        },
+        data,
+      }),
+    ]);
+    count = expenses.count + wonDeals.count;
+  } else {
+    const where = {
+      ...ownerScope,
+      ...notDeleted,
+      ...(dateRange
+        ? workspace === "marketing"
           ? { metricDate: dateRange }
           : { createdAt: dateRange }
-      : {}),
-  };
-  const data = softDeleteData(session.user.id, `Deleted all ${workspace} records${dateRange ? ` (${req.nextUrl.searchParams.get("from")} to ${req.nextUrl.searchParams.get("to")})` : ""}`);
-  const result = workspace === "finance"
-    ? await prisma.expense.updateMany({ where, data })
-    : workspace === "sales"
+        : {}),
+    };
+    const result = workspace === "sales"
       ? await prisma.deal.updateMany({ where, data })
       : workspace === "marketing"
         ? await prisma.marketingMetric.updateMany({ where, data })
         : workspace === "customers"
           ? await prisma.customer.updateMany({ where, data })
           : await prisma.product.updateMany({ where, data });
+    count = result.count;
+  }
 
-  return NextResponse.json({ success: true, count: result.count });
+  return NextResponse.json({ success: true, count });
 }

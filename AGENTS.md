@@ -22,6 +22,11 @@ npx prisma db push   # push schema to the database (no migration files in use)
 
 There is **no test suite** configured.
 
+## Git workflow
+
+- Commit locally when work is verified (`npm run lint` + `npm run build` pass). Use concise conventional-commit messages.
+- **Never `git push` unless the user explicitly asks** — pushing to `main` triggers a Vercel production deploy.
+
 ## Environment
 
 Required in `.env`:
