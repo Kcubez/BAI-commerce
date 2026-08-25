@@ -44,6 +44,7 @@ import { commerceDashboardKeys } from '@/hooks/use-commerce-dashboard';
 import { trashKeys } from '@/hooks/use-trash';
 import { useDateFilter } from '@/hooks/use-date-filter';
 import { CustomerServiceView } from '@/components/customer-service-view';
+import { commerceCustomersKeys } from '@/hooks/use-commerce-customers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -650,6 +651,7 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
       toast.success(`${result.count ?? 0} ${content[0]} record${result.count === 1 ? '' : 's'} moved to Trash`);
       // Refresh every workspace view (and Trash) so the deletion shows immediately.
       await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+      await queryClient.invalidateQueries({ queryKey: commerceCustomersKeys.all });
       await queryClient.invalidateQueries({ queryKey: trashKeys.all });
       setIsDeleteAllOpen(false);
       setDeleteConfirmText('');

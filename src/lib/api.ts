@@ -311,6 +311,40 @@ export type CommerceCustomersListParams = CommerceDashboardParams & {
   page?: number;
   limit?: number;
   search?: string;
+  followUpStatus?: "all" | "overdue" | "due";
+};
+
+export type CommerceCustomerRecordRow = {
+  id: string;
+  purchaseDate: string;
+  customerId: string | null;
+  customerName: string;
+  company: string | null;
+  phone: string | null;
+  sourceChannel: string | null;
+  product: string | null;
+  amount: number;
+  potential: "high" | "medium" | "low";
+  status: "new" | "contacted" | "quoted" | "pending" | "completed" | "lost";
+};
+
+export type CommerceCustomerRecordsResponse = {
+  records: CommerceCustomerRecordRow[];
+  total: number;
+  page: number;
+  totalPages: number;
+};
+
+export type CommerceCustomerRecordInput = {
+  customerName: string;
+  customerPhone?: string | null;
+  customerCompany?: string | null;
+  productName?: string | null;
+  amount?: number | null;
+  quantity?: number | null;
+  followUpDate?: string | null;
+  status?: "new" | "contacted" | "quoted" | "pending" | "closed" | "completed";
+  note?: string | null;
 };
 
 export type CommerceCustomerStats = {
@@ -358,6 +392,20 @@ export const commerceCustomersApi = {
     request<CommerceCustomerStats>(`/api/commerce/customers/stats?${commercePeriodQuery(params).toString()}`),
   analytics: (params: CommerceDashboardParams) =>
     request<CommerceCustomerAnalytics>(`/api/commerce/customers/analytics?${commercePeriodQuery(params).toString()}`),
+  records: (params: CommerceCustomersListParams) => {
+    const searchParams = commercePeriodQuery(params);
+    if (params.page) searchParams.set("page", String(params.page));
+    if (params.limit) searchParams.set("limit", String(params.limit));
+    if (params.search) searchParams.set("search", params.search);
+    if (params.followUpStatus && params.followUpStatus !== "all") searchParams.set("followUpStatus", params.followUpStatus);
+    return request<CommerceCustomerRecordsResponse>(`/api/commerce/customers/records?${searchParams.toString()}`);
+  },
+  createRecord: (data: CommerceCustomerRecordInput) =>
+    request<{ record: CommerceCustomerRecordRow }>("/api/commerce/customers/records", { method: "POST", body: data }),
+  updateRecord: (id: string, data: Partial<CommerceCustomerRecordInput>) =>
+    request<{ record: CommerceCustomerRecordRow }>(`/api/commerce/customers/records/${id}`, { method: "PATCH", body: data }),
+  deleteRecord: (id: string) =>
+    request<{ success: boolean }>(`/api/commerce/customers/records/${id}`, { method: "DELETE" }),
 };
 
 export type CommerceActionRecommendation = {

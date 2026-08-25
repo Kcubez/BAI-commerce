@@ -44,7 +44,7 @@ import { ModalPortal } from '@/components/ui/modal-portal';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { formatPhoneNumber } from '@/lib/utils';
-import type { CommerceDashboardParams, CommerceCustomerMetric, Customer, DemandRecord } from '@/lib/api';
+import type { CommerceCustomerRecordRow, CommerceCustomerRecordInput, CommerceDashboardParams, CommerceCustomerMetric, Customer } from '@/lib/api';
 import {
   useCommerceCustomerAnalytics,
   useCommerceCustomerDirectory,
@@ -53,13 +53,13 @@ import {
   useDeleteCommerceCustomer,
   useUpdateCommerceCustomer,
 } from '@/hooks/use-commerce-customers';
+import { useDemandRecordStats } from '@/hooks/use-demand-records';
 import {
-  useCreateDemandRecord,
-  useDemandRecordStats,
-  useDemandRecords,
-  useDeleteDemandRecord,
-  useUpdateDemandRecord,
-} from '@/hooks/use-demand-records';
+  useCommerceCustomerRecords,
+  useCreateCommerceCustomerRecord,
+  useDeleteCommerceCustomerRecord,
+  useUpdateCommerceCustomerRecord,
+} from '@/hooks/use-commerce-customers';
 
 const PAGE_SIZE = 10;
 
@@ -82,6 +82,7 @@ const leadStatusColors: Record<string, string> = {
   pending: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20',
   closed: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
   completed: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
+  lost: 'bg-slate-500/10 text-muted-foreground border-slate-500/20',
 };
 
 type EditableClient = Pick<Customer, 'id' | 'name' | 'phone' | 'email' | 'company' | 'status' | 'notes'>;
@@ -165,24 +166,23 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
   const [isCreatingCustomer, setIsCreatingCustomer] = useState(false);
   const [customerForm, setCustomerForm] = useState({ name: '', company: '', phone: '', email: '', status: 'active', notes: '' });
 
-  const [editingLead, setEditingLead] = useState<DemandRecord | null>(null);
+  const [editingLead, setEditingLead] = useState<CommerceCustomerRecordRow | null>(null);
   const [isCreatingLead, setIsCreatingLead] = useState(false);
   const [leadForm, setLeadForm] = useState({
     customerName: '',
     customerPhone: '',
     customerCompany: '',
-    serviceName: '',
-    serviceAmount: '',
-    serviceQty: '1',
+    productName: '',
+    purchaseAmount: '',
+    quantity: '1',
     followUpDate: '',
-    priority: 'medium',
     status: 'new',
     note: '',
   });
 
   // Delete Dialog States
   const [customerToDelete, setCustomerToDelete] = useState<EditableClient | null>(null);
-  const [leadToDelete, setLeadToDelete] = useState<DemandRecord | null>(null);
+  const [leadToDelete, setLeadToDelete] = useState<CommerceCustomerRecordRow | null>(null);
   const [showBehaviorAnalysis, setShowBehaviorAnalysis] = useState(false);
   const [customerDeleteConfirmText, setCustomerDeleteConfirmText] = useState('');
   const [leadDeleteConfirmText, setLeadDeleteConfirmText] = useState('');
@@ -221,22 +221,21 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
   const { data: stats, isLoading: statsLoading } = useCommerceCustomerStats(params);
   const { data: analytics, isLoading: analyticsLoading } = useCommerceCustomerAnalytics(params);
   const { data: demandStats, isLoading: demandStatsLoading } = useDemandRecordStats({ dateFrom, dateTo });
-  const { data: demandData, isLoading: demandLoading } = useDemandRecords({
+  const { data: recordData, isLoading: recordsLoading } = useCommerceCustomerRecords({
+    ...params,
     page: recordPage,
     limit: PAGE_SIZE,
     search: debouncedRecordSearch || undefined,
-    dateFrom,
-    dateTo,
-    followUpStatus: followUpFilter === 'all' ? undefined : followUpFilter,
+    followUpStatus: followUpFilter as 'all' | 'overdue' | 'due',
   });
 
   // Mutations
   const createCustomerMutation = useCreateCommerceCustomer();
   const updateCustomerMutation = useUpdateCommerceCustomer();
   const deleteCustomer = useDeleteCommerceCustomer();
-  const createLeadMutation = useCreateDemandRecord();
-  const updateLeadMutation = useUpdateDemandRecord();
-  const deleteLeadMutation = useDeleteDemandRecord();
+  const createLeadMutation = useCreateCommerceCustomerRecord();
+  const updateLeadMutation = useUpdateCommerceCustomerRecord();
+  const deleteLeadMutation = useDeleteCommerceCustomerRecord();
 
   function handleSaveCustomer(e: React.FormEvent) {
     e.preventDefault();
@@ -262,19 +261,18 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
   function handleSaveLead(e: React.FormEvent) {
     e.preventDefault();
     if (!leadForm.customerName.trim()) {
-      toast.error('Lead name is required');
+      toast.error('Customer name is required');
       return;
     }
-    const payload = {
+    const payload: CommerceCustomerRecordInput = {
       customerName: leadForm.customerName.trim(),
       customerPhone: leadForm.customerPhone.trim() || null,
       customerCompany: leadForm.customerCompany.trim() || null,
-      serviceName: leadForm.serviceName.trim() || null,
-      serviceAmount: leadForm.serviceAmount ? parseFloat(leadForm.serviceAmount) : null,
-      serviceQty: leadForm.serviceQty ? parseInt(leadForm.serviceQty) : 1,
+      productName: leadForm.productName.trim() || null,
+      amount: leadForm.purchaseAmount ? parseFloat(leadForm.purchaseAmount) : null,
+      quantity: leadForm.quantity ? parseInt(leadForm.quantity) : 1,
       followUpDate: leadForm.followUpDate || null,
-      priority: leadForm.priority as 'high' | 'medium' | 'low',
-      status: leadForm.status,
+      status: leadForm.status as CommerceCustomerRecordInput['status'],
       note: leadForm.note.trim() || '',
     };
     if (editingLead) {
@@ -301,19 +299,18 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
     setCustomerForm({ name: '', company: '', phone: '', email: '', status: 'active', notes: '' });
   }
 
-  function openEditLead(lead: DemandRecord) {
-    setEditingLead(lead);
+  function openEditLead(record: CommerceCustomerRecordRow) {
+    setEditingLead(record);
     setLeadForm({
-      customerName: lead.customerName || '',
-      customerPhone: lead.customer?.phone || '',
-      customerCompany: lead.customer?.company || '',
-      serviceName: lead.serviceName || '',
-      serviceAmount: lead.serviceAmount ? String(lead.serviceAmount) : '',
-      serviceQty: lead.serviceQty ? String(lead.serviceQty) : '1',
-      followUpDate: lead.followUpDate ? lead.followUpDate.slice(0, 10) : '',
-      priority: lead.priority || 'medium',
-      status: lead.status || 'new',
-      note: lead.note || '',
+      customerName: record.customerName || '',
+      customerPhone: record.phone ? String(record.phone).replace(/^\+959/, '09') : '',
+      customerCompany: record.company || '',
+      productName: record.product || '',
+      purchaseAmount: record.amount ? String(record.amount) : '',
+      quantity: '1',
+      followUpDate: '',
+      status: record.status === 'lost' ? 'pending' : record.status,
+      note: '',
     });
   }
 
@@ -323,11 +320,10 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
       customerName: '',
       customerPhone: '',
       customerCompany: '',
-      serviceName: '',
-      serviceAmount: '',
-      serviceQty: '1',
+      productName: '',
+      purchaseAmount: '',
+      quantity: '1',
       followUpDate: '',
-      priority: 'medium',
       status: 'new',
       note: '',
     });
@@ -716,7 +712,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                {demandLoading ? (
+                {recordsLoading ? (
                   Array.from({ length: 5 }).map((_, index) => (
                     <tr key={index}>
                       <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
@@ -729,45 +725,44 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                       <td className="px-6 py-4"><Skeleton className="h-5 w-14 mx-auto" /></td>
                     </tr>
                   ))
-                ) : demandData?.records && demandData.records.length > 0 ? (
-                  demandData.records.map((lead) => {
-                    const leadPhone = formatPhoneNumber(lead.customer?.phone);
-                    const leadCompany = lead.customer?.company;
+                ) : recordData?.records && recordData.records.length > 0 ? (
+                  recordData.records.map((record) => {
+                    const leadPhone = formatPhoneNumber(record.phone);
                     return (
-                      <tr key={lead.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-900/40 align-middle">
+                      <tr key={record.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-900/40 align-middle">
                         <td className="px-6 py-4 font-mono text-xs text-slate-600 dark:text-slate-400">
-                          {format(new Date(lead.createdAt), 'd MMM yyyy')}
+                          {format(new Date(record.purchaseDate), 'd MMM yyyy')}
                         </td>
                         <td className="px-6 py-4 font-bold text-slate-900 dark:text-slate-100">
-                          {lead.customerId ? (
-                            <Link href={`/customers/${lead.customerId}`} className="hover:text-blue-600 transition-colors">
-                              {lead.customerName || 'Unknown'}
+                          {record.customerId ? (
+                            <Link href={`/customers/${record.customerId}`} className="hover:text-blue-600 transition-colors">
+                              {record.customerName}
                             </Link>
                           ) : (
-                            lead.customerName || 'Unknown'
+                            record.customerName
                           )}
-                          {leadCompany && <span className="block text-xs font-normal text-muted-foreground">{leadCompany}</span>}
+                          {record.company && <span className="block text-xs font-normal text-muted-foreground">{record.company}</span>}
                         </td>
-                        <td className="px-6 py-4 text-slate-600 dark:text-slate-400 font-semibold">{lead.sourceChannel || lead.sourceType || 'Telegram'}</td>
+                        <td className="px-6 py-4 text-slate-600 dark:text-slate-400 font-semibold">{record.sourceChannel || 'Telegram'}</td>
                         <td className="px-6 py-4 text-slate-700 dark:text-slate-300">
-                          {lead.serviceName || (lead.note ? lead.note.slice(0, 45) + (lead.note.length > 45 ? '...' : '') : '-')}
+                          {record.product || '-'}
                         </td>
                         <td className="px-6 py-4 font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400">
                           {leadPhone || <span className="text-slate-400 font-normal italic">No contact</span>}
                         </td>
                         <td className="px-6 py-4 text-center">
-                          <Badge variant="outline" className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 ${priorityColors[lead.priority] || priorityColors.medium}`}>
-                            {lead.priority === 'high' ? 'High Potential' : lead.priority}
+                          <Badge variant="outline" className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 ${priorityColors[record.potential] || priorityColors.medium}`}>
+                            {record.potential === 'high' ? 'High Potential' : record.potential}
                           </Badge>
                         </td>
                         <td className="px-6 py-4 text-center">
-                          <Badge variant="outline" className={`text-[10px] font-bold px-2 py-0.5 capitalize ${leadStatusColors[lead.status] || leadStatusColors.new}`}>
-                            {lead.status}
+                          <Badge variant="outline" className={`text-[10px] font-bold px-2 py-0.5 capitalize ${leadStatusColors[record.status] || leadStatusColors.new}`}>
+                            {record.status === 'completed' ? 'Completed' : record.status}
                           </Badge>
                         </td>
                         <td className="px-6 py-4 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            <Button variant="ghost" size="icon" onClick={() => openEditLead(lead)} className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-md cursor-pointer">
+                            <Button variant="ghost" size="icon" onClick={() => openEditLead(record)} className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-md cursor-pointer">
                               <Edit2 className="w-3.5 h-3.5" />
                             </Button>
                             <Button
@@ -775,7 +770,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                               size="icon"
                               onClick={() => {
                                 setLeadDeleteConfirmText('');
-                                setLeadToDelete(lead);
+                                setLeadToDelete(record);
                               }}
                               className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-md cursor-pointer"
                             >
@@ -796,17 +791,17 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
           </div>
         </CardContent>
 
-        {demandData && demandData.totalPages > 1 && (
+        {recordData && recordData.totalPages > 1 && (
           <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-800 bg-card/20 px-6 py-4">
             <div className="text-xs text-muted-foreground font-mono">
-              Showing Page <span className="text-foreground font-bold">{recordPage}</span> of <span className="text-foreground font-bold">{demandData.totalPages}</span>
+              Showing Page <span className="text-foreground font-bold">{recordPage}</span> of <span className="text-foreground font-bold">{recordData.totalPages}</span>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" disabled={recordPage <= 1} onClick={() => setRecordPage((page) => Math.max(1, page - 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
                 <ChevronLeft className="w-4 h-4 mr-1" />
                 Prev
               </Button>
-              <Button variant="outline" size="sm" disabled={recordPage >= demandData.totalPages} onClick={() => setRecordPage((page) => Math.min(demandData.totalPages, page + 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+              <Button variant="outline" size="sm" disabled={recordPage >= recordData.totalPages} onClick={() => setRecordPage((page) => Math.min(recordData.totalPages, page + 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
                 Next
                 <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
@@ -918,27 +913,19 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                 </div>
                 <div className="space-y-1.5 col-span-2">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Purchased Product</label>
-                  <Input value={leadForm.serviceName} onChange={(e) => setLeadForm({ ...leadForm, serviceName: e.target.value })} placeholder="e.g. iPhone 15 Case Bundle" className="bg-muted/35 border-border text-foreground" />
+                  <Input value={leadForm.productName} onChange={(e) => setLeadForm({ ...leadForm, productName: e.target.value })} placeholder="e.g. iPhone 15 Case Bundle" className="bg-muted/35 border-border text-foreground" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Purchase Amount (Ks)</label>
-                  <Input type="number" value={leadForm.serviceAmount} onChange={(e) => setLeadForm({ ...leadForm, serviceAmount: e.target.value })} placeholder="e.g. 150000" className="bg-muted/35 border-border text-foreground" />
+                  <Input type="number" value={leadForm.purchaseAmount} onChange={(e) => setLeadForm({ ...leadForm, purchaseAmount: e.target.value })} placeholder="e.g. 150000" className="bg-muted/35 border-border text-foreground" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Quantity</label>
-                  <Input type="number" value={leadForm.serviceQty} onChange={(e) => setLeadForm({ ...leadForm, serviceQty: e.target.value })} placeholder="1" className="bg-muted/35 border-border text-foreground" />
+                  <Input type="number" value={leadForm.quantity} onChange={(e) => setLeadForm({ ...leadForm, quantity: e.target.value })} placeholder="1" className="bg-muted/35 border-border text-foreground" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Follow-up Date</label>
                   <Input type="date" value={leadForm.followUpDate} onChange={(e) => setLeadForm({ ...leadForm, followUpDate: e.target.value })} className="bg-muted/35 border-border text-foreground w-full" />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground">Priority / Potential</label>
-                  <select value={leadForm.priority} onChange={(e) => setLeadForm({ ...leadForm, priority: e.target.value })} className="w-full h-10 bg-muted border border-border rounded-lg px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500">
-                    <option value="high">High Potential</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </select>
                 </div>
                 <div className="space-y-1.5 col-span-2">
                   <label className="text-xs font-semibold uppercase text-muted-foreground">Purchase Status</label>

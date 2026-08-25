@@ -2,6 +2,7 @@
 
 import {
   commerceCustomersApi,
+  CommerceCustomerRecordInput,
   CommerceCustomersListParams,
   type Customer,
 } from "@/lib/api";
@@ -17,6 +18,7 @@ export const commerceCustomersKeys = {
   directory: (params: CommerceCustomersListParams) => [...commerceCustomersKeys.all, "directory", params] as const,
   stats: (params: CommerceCustomersListParams) => [...commerceCustomersKeys.all, "stats", params] as const,
   analytics: (params: CommerceCustomersListParams) => [...commerceCustomersKeys.all, "analytics", params] as const,
+  records: (params: CommerceCustomersListParams) => [...commerceCustomersKeys.all, "records", params] as const,
 };
 
 /** Invalidate everything that displays customer or purchase data. */
@@ -91,6 +93,58 @@ export function useDeleteCommerceCustomer() {
     },
     onError: (error: unknown) => {
       toast.error(error instanceof Error ? error.message : "Failed to delete customer");
+    },
+  });
+}
+
+export function useCommerceCustomerRecords(params: CommerceCustomersListParams) {
+  return useQuery({
+    queryKey: commerceCustomersKeys.records(params),
+    queryFn: () => commerceCustomersApi.records(params),
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useCreateCommerceCustomerRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CommerceCustomerRecordInput) => commerceCustomersApi.createRecord(data),
+    onSuccess: () => {
+      invalidateCustomerData(queryClient);
+      toast.success("Purchase record created successfully");
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to create purchase record");
+    },
+  });
+}
+
+export function useUpdateCommerceCustomerRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string } & Partial<CommerceCustomerRecordInput>) =>
+      commerceCustomersApi.updateRecord(id, data),
+    onSuccess: () => {
+      invalidateCustomerData(queryClient);
+      toast.success("Purchase record updated successfully");
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to update purchase record");
+    },
+  });
+}
+
+export function useDeleteCommerceCustomerRecord() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => commerceCustomersApi.deleteRecord(id),
+    onSuccess: (_res, id) => {
+      removeListItemQueryData(queryClient, commerceCustomersKeys.all, "records", id);
+      invalidateCustomerData(queryClient);
+      toast.success("Record moved to Trash");
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : "Failed to delete record");
     },
   });
 }

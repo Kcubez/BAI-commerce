@@ -131,24 +131,11 @@ async function createFinanceRecord({
   }});
 
   if (record.type.toLowerCase() === "income") {
-    // No DealItems here: income rows are summaries (e.g. "Product sales week 1"),
-    // and items would pollute the Top Performing Products table. Revenue counts
-    // via quotedAmount.
-    return prisma.deal.create({
-      data: {
-        userId,
-        stage: "WON",
-        fulfillmentStatus: "FULFILLED",
-        source: "telegram_finance",
-        sourceChannel: "Telegram",
-        quotedAmount: record.amount,
-        // Backdate so the income lands in the transaction's month.
-        createdAt: record.date,
-        lastContactAt: record.date,
-        wonAt: record.date,
-        note: [record.description, record.notes, record.reference ? `Ref: ${record.reference}` : ""].filter(Boolean).join(" · "),
-      },
-    });
+    // Ledger-only: income rows (sales summaries, receivables, vouchers, owner
+    // capital) are accounting records, NOT sales. Revenue comes from actual
+    // order deals (sales_orders import / CS import) so the ledger never
+    // double-counts or inflates Revenue with capital injections.
+    return null;
   }
 
   return prisma.expense.create({
