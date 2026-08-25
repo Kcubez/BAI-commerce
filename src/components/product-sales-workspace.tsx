@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import {
   AlertTriangle,
@@ -8,6 +9,8 @@ import {
   BarChart3,
   Bot,
   CalendarCheck,
+  ChevronDown,
+  ChevronUp,
   DollarSign,
   LineChart,
   Megaphone,
@@ -29,8 +32,14 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { useCommerceDashboard, useCommerceWorkspaces, useSaveCommerceTargets } from '@/hooks/use-commerce-dashboard';
-import type { CommerceDashboard, CommerceWorkspaceData } from '@/lib/api';
+import {
+  useCommerceDashboard,
+  useCommerceRecommendations,
+  useCommerceWorkspaces,
+  useSaveCommerceTargets,
+} from '@/hooks/use-commerce-dashboard';
+import type { CommerceActionRecommendation, CommerceDashboard, CommerceDashboardParams, CommerceWorkspaceData } from '@/lib/api';
+import { useDateFilter } from '@/hooks/use-date-filter';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,6 +56,21 @@ type Workspace = 'overview' | 'finance' | 'sales' | 'marketing' | 'customers' | 
 type CardTone = 'emerald' | 'red' | 'sky' | 'amber';
 
 const amount = (value: number) => value.toLocaleString();
+
+function periodRangeLabel(
+  period: string,
+  year: number,
+  month: number,
+  day: number,
+  customFrom: string,
+  customTo: string,
+): string {
+  if (period === 'overall') return 'Overall';
+  if (period === 'year') return `Year ${year}`;
+  if (period === 'day') return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  if (period === 'custom') return `${customFrom} → ${customTo}`;
+  return new Date(year, month - 1).toLocaleString('en', { month: 'long', year: 'numeric' });
+}
 
 function ProgressCard({
   title,
@@ -112,6 +136,90 @@ function InsightCard({ title, text, action, tone = 'red' }: { title: string; tex
       <Button className={`mt-4 h-9 rounded-lg text-xs font-bold ${alert ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
         {action}
       </Button>
+    </section>
+  );
+}
+
+const recommendationActionLink: Record<CommerceActionRecommendation['actionType'], string> = {
+  view_sales: '/sales',
+  view_finance: '/finance',
+  view_inventory: '/inventory',
+  view_marketing: '/marketing',
+  set_target_modal: '',
+  general_dashboard: '/dashboard',
+};
+
+function SmartSuggestions({
+  recommendations,
+  isLoading,
+  onSetTargets,
+}: {
+  recommendations?: CommerceActionRecommendation[];
+  isLoading: boolean;
+  onSetTargets: () => void;
+}) {
+  const router = useRouter();
+  const [visible, setVisible] = useState(false);
+  if (!isLoading && (!recommendations || recommendations.length === 0)) return null;
+
+  return (
+    <section className="overflow-hidden rounded-xl border-2 border-sky-200 bg-sky-50/30 shadow-sm dark:border-sky-900/60 dark:bg-sky-950/15">
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-bold text-foreground">
+            <Bot className="h-4 w-4 text-sky-600" />
+            Smart Suggestions
+            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">Code-calculated</span>
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">Suggestions are hidden until you choose to review them.</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setVisible((open) => !open)}
+          className="shrink-0 border-border bg-card text-foreground hover:bg-muted/50"
+        >
+          {visible ? 'Hide suggestions' : 'View suggestions'}
+          {visible ? <ChevronUp className="ml-1.5 h-4 w-4" /> : <ChevronDown className="ml-1.5 h-4 w-4" />}
+        </Button>
+      </div>
+      {visible && (
+        <div className="grid grid-cols-1 gap-6 border-t border-sky-200 p-5 md:grid-cols-2 dark:border-sky-900/60">
+          {(recommendations ?? []).slice(0, 4).map((rec, index) => {
+            const isAlert = rec.severity === 'urgent' || rec.severity === 'warning';
+            const borderColor = isAlert ? 'border-red-300 dark:border-red-900/60' : 'border-emerald-300 dark:border-emerald-900/60';
+            const borderLeftColor = isAlert ? 'border-l-red-500' : 'border-l-emerald-500';
+            const iconColor = isAlert ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+            const Icon = isAlert ? AlertTriangle : Award;
+            return (
+              <div key={`${rec.actionType}-${index}`} className={`bg-card border-2 ${borderColor} border-l-8 ${borderLeftColor} rounded-xl p-5 flex flex-col justify-center shadow-sm`}>
+                <div className="flex items-center gap-3 mb-2">
+                  <Icon className={`${iconColor} w-5 h-5 flex-shrink-0`} />
+                  <h4 className="font-bold text-foreground text-sm">{rec.title}</h4>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{rec.insight}</p>
+                {rec.action && (
+                  <div className="mt-3">
+                    <button
+                      onClick={() => {
+                        if (rec.actionType === 'set_target_modal') onSetTargets();
+                        else router.push(recommendationActionLink[rec.actionType]);
+                      }}
+                      className={`${
+                        isAlert
+                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          : 'bg-background border-2 border-slate-300 dark:border-slate-700 text-foreground hover:bg-muted'
+                      } px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer`}
+                    >
+                      {rec.action}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }
@@ -365,10 +473,14 @@ function MarketingWorkspace({ data }: { data?: CommerceWorkspaceData['marketing'
 function CustomerServiceWorkspace({ data }: { data?: CommerceWorkspaceData['customers'] }) {
   const customers = data?.purchasedCustomers ?? [];
   const leads = data?.leads ?? [];
+  const highPotential = data?.kpis.highPotential ?? 0;
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Inquiries" value={amount(data?.kpis.inquiries ?? 0)} icon={Megaphone} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="High Potential" value={amount(data?.kpis.highPotential ?? 0)} icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /><FinanceKpiCard label="Total Customers" value={amount(data?.kpis.totalCustomers ?? 0)} icon={Users} accentClass="border-l-4 border-l-violet-500" /><FinanceKpiCard label="Avg Order Value" value={amount(data?.kpis.avgOrderValue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-amber-500" /></div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2"><section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><TrendingUp className="h-5 w-5 text-emerald-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">34 high-potential inquiries need attention</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">Prioritize people who have asked about products, prices, or delivery. They are closest to purchase.</p></div><Button variant="outline" size="sm" className="mt-4 h-9 w-fit rounded-lg border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => toast.info('High-potential leads filter selected')}>Review high potential</Button></div></section><section className="bg-card border-2 border-amber-300 border-l-8 border-l-amber-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><AlertTriangle className="h-5 w-5 text-amber-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">Follow-up timing needs review</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">Some inquiries have not received a response recently. Review the queue before customer interest cools.</p></div><Button size="sm" className="mt-4 h-9 w-fit rounded-lg bg-amber-600 px-4 text-xs font-bold text-white hover:bg-amber-700" onClick={() => toast.info('Follow-up queue selected')}>Review follow-ups</Button></div></section></div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Inquiries" value={amount(data?.kpis.inquiries ?? 0)} icon={Megaphone} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="High Potential" value={amount(highPotential)} icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /><FinanceKpiCard label="Total Customers" value={amount(data?.kpis.totalCustomers ?? 0)} icon={Users} accentClass="border-l-4 border-l-violet-500" /><FinanceKpiCard label="Avg Order Value" value={amount(data?.kpis.avgOrderValue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-amber-500" /></div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><TrendingUp className="h-5 w-5 text-emerald-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">{highPotential > 0 ? `${highPotential} high-potential inquiries need attention` : 'No high-potential inquiries yet'}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">Prioritize people who have asked about products, prices, or delivery. They are closest to purchase.</p></div><Button variant="outline" size="sm" className="mt-4 h-9 w-fit rounded-lg border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => toast.info('High-potential leads filter selected')}>Review high potential</Button></div></section>
+        <section className="bg-card border-2 border-amber-300 border-l-8 border-l-amber-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><AlertTriangle className="h-5 w-5 text-amber-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">{leads.length > 0 ? `Follow-up timing needs review (${leads.length} open)` : 'Follow-up queue is clear'}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">Some inquiries have not received a response recently. Review the queue before customer interest cools.</p></div><Button size="sm" className="mt-4 h-9 w-fit rounded-lg bg-amber-600 px-4 text-xs font-bold text-white hover:bg-amber-700" onClick={() => toast.info('Follow-up queue selected')}>Review follow-ups</Button></div></section>
+      </div>
       <section className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden"><div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"><h2 className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">1. Purchased Customers Directory</h2><Button variant="outline" size="sm" className="h-9 text-xs font-bold" onClick={() => toast.info('Customer directory opened')}>View all customers</Button></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40"><tr>{['Customer Name', 'Purchased Product', 'Amount Paid (MMK)', 'Status', 'Actions'].map((heading) => <th key={heading} className={`px-6 py-4 ${heading.includes('Amount') ? 'text-right' : heading === 'Actions' ? 'text-center' : 'text-left'}`}>{heading}</th>)}</tr></thead><tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">{customers.map((customer) => <tr key={customer.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50"><td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{customer.name}</td><td className="px-6 py-4 text-xs font-semibold text-slate-500">{customer.product}</td><td className="px-6 py-4 text-right text-sm font-black text-emerald-700">{amount(customer.amount)}</td><td className="px-6 py-4"><span className="rounded border-2 border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-extrabold text-emerald-700">{customer.status.toUpperCase()}</span></td><td className="px-6 py-4"><div className="flex items-center justify-center gap-2"><Button aria-label={`Edit ${customer.name}`} variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700" onClick={() => toast.info(`Edit ${customer.name}`)}><Pencil className="h-4 w-4" /></Button><Button aria-label={`Delete ${customer.name}`} variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => toast.success(`${customer.name} moved to Trash`)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}{customers.length === 0 && <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No purchased customers yet.</td></tr>}</tbody></table></div></section>
       <section className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden"><div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"><h2 className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">2. Inquiry / Lead Data</h2><Button variant="outline" size="sm" className="h-9 text-xs font-bold" onClick={() => toast.info('Inquiry data opened')}>View all inquiries</Button></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40"><tr>{['Customer Name', 'Source', 'Interested Product', 'Status', 'Actions'].map((heading) => <th key={heading} className={`px-6 py-4 ${heading === 'Actions' ? 'text-center' : 'text-left'}`}>{heading}</th>)}</tr></thead><tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">{leads.map((lead) => <tr key={lead.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50"><td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{lead.name}</td><td className="px-6 py-4 text-xs font-semibold text-slate-500">{lead.source}</td><td className="px-6 py-4 text-xs font-semibold text-slate-500">{lead.product}</td><td className="px-6 py-4"><span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${lead.status === 'High Potential' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : lead.status === 'Follow-up' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-sky-200 bg-sky-50 text-sky-700'}`}>{lead.status.toUpperCase()}</span></td><td className="px-6 py-4"><div className="flex items-center justify-center gap-2"><Button aria-label={`Edit ${lead.name} lead`} variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700" onClick={() => toast.info(`Edit ${lead.name}`)}><Pencil className="h-4 w-4" /></Button><Button aria-label={`Delete ${lead.name} lead`} variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => toast.success(`${lead.name} moved to Trash`)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}{leads.length === 0 && <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No inquiry or lead data yet.</td></tr>}</tbody></table></div></section>
     </div>
@@ -377,20 +489,34 @@ function CustomerServiceWorkspace({ data }: { data?: CommerceWorkspaceData['cust
 
 function InventoryWorkspace({ data }: { data?: CommerceWorkspaceData['inventory'] }) {
   const products = data?.products ?? [];
+  const outOfStock = products.filter((product) => product.status === 'Out of Stock');
+  const wellStocked = products.find((product) => product.status === 'In Stock');
   const statusClass = (status: string) => status === 'In Stock' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : status === 'Low Stock' ? 'border-amber-200 bg-amber-50 text-amber-700' : status === 'Out of Stock' ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-600';
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Products" value={amount(data?.kpis.totalProducts ?? 0)} icon={Package} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Low Stock Items" value={amount(data?.kpis.lowStockItems ?? 0)} icon={AlertTriangle} accentClass="border-l-4 border-l-amber-500" /><FinanceKpiCard label="Out of Stock" value={amount(data?.kpis.outOfStock ?? 0)} icon={Package} accentClass="border-l-4 border-l-red-500" /><FinanceKpiCard label="Inventory Value" value={amount(data?.kpis.inventoryValue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-emerald-500" /></div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2"><section className="bg-card border-2 border-red-300 border-l-8 border-l-red-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><AlertTriangle className="h-5 w-5 text-red-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">Two products are out of stock</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">Korean Style Handbag and Leather Wallet cannot be sold until replenished. Review supplier availability.</p></div><Button size="sm" className="mt-4 h-9 w-fit rounded-lg bg-red-600 px-4 text-xs font-bold text-white hover:bg-red-700" onClick={() => toast.info('Out-of-stock products selected')}>Review stockouts</Button></div></section><section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><TrendingUp className="h-5 w-5 text-emerald-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">Cotton Oversized Tee is well stocked</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">Stock is comfortably above its minimum quantity. It can support the next promotion cycle.</p></div><Button variant="outline" size="sm" className="mt-4 h-9 w-fit rounded-lg border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => toast.info('Cotton Oversized Tee selected')}>View product</Button></div></section></div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <section className="bg-card border-2 border-red-300 border-l-8 border-l-red-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><AlertTriangle className="h-5 w-5 text-red-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">{outOfStock.length > 0 ? `${outOfStock.length} product${outOfStock.length === 1 ? ' is' : 's are'} out of stock` : 'No stockouts right now'}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{outOfStock.length > 0 ? `${outOfStock.slice(0, 3).map((product) => product.name).join(', ')} cannot be sold until replenished. Review supplier availability.` : 'Every product has stock available for the next sale.'}</p></div><Button size="sm" className="mt-4 h-9 w-fit rounded-lg bg-red-600 px-4 text-xs font-bold text-white hover:bg-red-700" onClick={() => toast.info('Out-of-stock products selected')}>Review stockouts</Button></div></section>
+        <section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><TrendingUp className="h-5 w-5 text-emerald-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">{wellStocked ? `${wellStocked.name} is well stocked` : 'Stock levels look stable'}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{wellStocked ? `${wellStocked.stockLevel}. It can support the next promotion cycle.` : 'Low-stock alerts will appear when a product crosses its threshold.'}</p></div><Button variant="outline" size="sm" className="mt-4 h-9 w-fit rounded-lg border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => toast.info(wellStocked ? `${wellStocked.name} selected` : 'Inventory overview selected')}>View product</Button></div></section>
+      </div>
       <section className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden"><div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"><div><h2 className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">Product Catalog</h2><p className="mt-1 text-xs text-muted-foreground">Product Code is the internal identifier used to identify each product.</p></div><Button variant="outline" size="sm" className="h-9 text-xs font-bold" onClick={() => toast.info('Product catalog opened')}>View all products</Button></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40"><tr>{['Product', 'Product Code', 'Stock Level', 'Status', 'Actions'].map((heading) => <th key={heading} className={`px-6 py-4 ${heading === 'Actions' ? 'text-center' : 'text-left'}`}>{heading}</th>)}</tr></thead><tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">{products.map((product) => <tr key={product.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50"><td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{product.name}</td><td className="px-6 py-4 text-xs font-bold text-slate-500">{product.productCode}</td><td className="px-6 py-4 text-xs font-semibold text-slate-500">{product.stockLevel}</td><td className="px-6 py-4"><span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${statusClass(product.status)}`}>{product.status.toUpperCase()}</span></td><td className="px-6 py-4"><div className="flex items-center justify-center gap-2"><Button aria-label={`Edit ${product.name}`} variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700" onClick={() => toast.info(`Edit ${product.name}`)}><Pencil className="h-4 w-4" /></Button><Button aria-label={`Delete ${product.name}`} variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => toast.success(`${product.name} moved to Trash`)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}{products.length === 0 && <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No products in catalog yet.</td></tr>}</tbody></table></div></section>
     </div>
   );
 }
 
 export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
-  const [period, setPeriod] = useState('month');
-  const [month, setMonth] = useState('7');
-  const [year, setYear] = useState('2026');
+  const {
+    period,
+    month,
+    day,
+    year,
+    customFrom,
+    customTo,
+    updatePeriod,
+    years: filterYears,
+    dateFrom,
+    dateTo,
+  } = useDateFilter('workspace_filter');
   const [isTargetDialogOpen, setIsTargetDialogOpen] = useState(false);
   const [targetRevenue, setTargetRevenue] = useState('30000000');
   const [targetExpense, setTargetExpense] = useState('11000000');
@@ -401,9 +527,16 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const overview = workspace === 'overview';
-  const dashboardParams = { period: period === 'year' ? 'year' as const : 'month' as const, year: Number(year), month: Number(month) };
+  const dashboardParams: CommerceDashboardParams = {
+    period,
+    year: Number(year),
+    month: Number(month),
+    ...(period === 'day' ? { day: Number(day) } : {}),
+    ...(period === 'custom' ? { from: customFrom, to: customTo } : {}),
+  };
   const { data: dashboard } = useCommerceDashboard(dashboardParams, overview);
-  const { data: workspaceData } = useCommerceWorkspaces({ year: Number(year), month: Number(month) }, !overview);
+  const { data: workspaceData } = useCommerceWorkspaces(dashboardParams, !overview);
+  const { data: recommendationsData, isLoading: recsLoading } = useCommerceRecommendations(dashboardParams, overview);
   const saveTargets = useSaveCommerceTargets();
   const content = {
     overview: ['Business Overview', 'Daily intelligence feed and target pacing.'],
@@ -461,7 +594,12 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
   async function handleDeleteAll() {
     setIsDeleting(true);
     try {
-      const response = await fetch(`/api/commerce/delete-all?workspace=${workspace}`, { method: 'DELETE' });
+      const search = new URLSearchParams({ workspace });
+      if ((period === 'month' || period === 'day' || period === 'year' || period === 'custom') && dateFrom && dateTo) {
+        search.set('from', dateFrom);
+        search.set('to', dateTo);
+      }
+      const response = await fetch(`/api/commerce/delete-all?${search.toString()}`, { method: 'DELETE' });
       const result = await response.json() as { count?: number; message?: string };
       if (!response.ok) throw new Error(result.message ?? 'Unable to move records to Trash');
       toast.success(`${result.count ?? 0} ${content[0]} record${result.count === 1 ? '' : 's'} moved to Trash`);
@@ -481,23 +619,72 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
           <h1 className="text-3xl font-bold text-foreground mb-1 font-heading">{content[0]}</h1>
           <p className="text-muted-foreground text-sm">{content[1]}</p>
         </div>
-        <div className="flex flex-wrap gap-2 items-center">
-          <Select value={period} onValueChange={(value) => value && setPeriod(value)}>
-            <SelectTrigger className="h-9 w-28 rounded-lg border-2 border-slate-300 dark:border-slate-800 bg-card text-xs font-bold text-slate-800 dark:text-slate-200">
-              {period === 'year' ? 'Yearly' : 'Monthly'}
+        <div className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-slate-200/80 bg-white/70 p-1.5 shadow-sm backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/60 lg:w-auto">
+          <Select value={period} onValueChange={(value) => {
+            if (value === 'overall' || value === 'day' || value === 'month' || value === 'year' || value === 'custom') {
+              updatePeriod({ period: value });
+            }
+          }}>
+            <SelectTrigger className="h-9 w-36 rounded-lg border border-slate-200 bg-background text-sm font-semibold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-200">
+              {period === 'overall' ? 'Overall' : period === 'year' ? 'Yearly' : period === 'day' ? 'Daily' : period === 'custom' ? 'Custom range' : 'Monthly'}
             </SelectTrigger>
-            <SelectContent><SelectItem value="month">Monthly</SelectItem><SelectItem value="year">Yearly</SelectItem></SelectContent>
+            <SelectContent>
+              <SelectItem value="overall">Overall</SelectItem>
+              <SelectItem value="day">Daily</SelectItem>
+              <SelectItem value="month">Monthly</SelectItem>
+              <SelectItem value="year">Yearly</SelectItem>
+              <SelectItem value="custom">Custom range</SelectItem>
+            </SelectContent>
           </Select>
-          {period === 'month' && <Select value={month} onValueChange={(value) => value && setMonth(value)}>
-            <SelectTrigger className="h-9 w-32 rounded-lg border-2 border-slate-300 dark:border-slate-800 bg-card text-xs font-bold text-slate-800 dark:text-slate-200">
-              {new Date(Number(year), Number(month) - 1).toLocaleString('en', { month: 'long' })}
-            </SelectTrigger>
-            <SelectContent>{Array.from({ length: 12 }, (_, index) => <SelectItem key={index + 1} value={String(index + 1)}>{new Date(Number(year), index).toLocaleString('en', { month: 'long' })}</SelectItem>)}</SelectContent>
-          </Select>}
-          <Select value={year} onValueChange={(value) => value && setYear(value)}>
-            <SelectTrigger className="h-9 w-24 rounded-lg border-2 border-slate-300 dark:border-slate-800 bg-card text-xs font-bold text-slate-800 dark:text-slate-200">{year}</SelectTrigger>
-            <SelectContent>{[2025, 2026, 2027].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent>
-          </Select>
+          {period === 'custom' ? (
+            <div className="flex items-center gap-1.5">
+              <Input type="date" value={customFrom} onChange={(event) => updatePeriod({ customFrom: event.target.value })} className="h-9 w-40 rounded-lg border border-slate-200 bg-background text-sm font-semibold shadow-sm dark:border-slate-700" aria-label="Start date" />
+              <span className="px-1 text-xs font-medium text-muted-foreground">to</span>
+              <Input type="date" value={customTo} min={customFrom} onChange={(event) => updatePeriod({ customTo: event.target.value })} className="h-9 w-40 rounded-lg border border-slate-200 bg-background text-sm font-semibold shadow-sm dark:border-slate-700" aria-label="End date" />
+            </div>
+          ) : period === 'day' ? (
+            <Input
+              type="date"
+              value={`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`}
+              onChange={(event) => {
+                const next = new Date(`${event.target.value}T00:00:00`);
+                if (!Number.isNaN(next.getTime())) updatePeriod({ year: next.getFullYear(), month: next.getMonth() + 1, day: next.getDate() });
+              }}
+              className="h-9 w-40 rounded-lg border border-slate-200 bg-background text-sm font-semibold shadow-sm dark:border-slate-700"
+              aria-label="Select day"
+            />
+          ) : period === 'month' ? (
+            <Select value={String(month)} onValueChange={(value) => {
+              if (value) updatePeriod({ month: Number(value) });
+            }}>
+              <SelectTrigger className="h-9 w-32 rounded-lg border border-slate-200 bg-background text-sm font-semibold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-200">
+                {new Date(Number(year), Number(month) - 1, 1).toLocaleString('en', { month: 'long' })}
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 12 }).map((_, index) => (
+                  <SelectItem key={index + 1} value={String(index + 1)}>
+                    {new Date(Number(year), index, 1).toLocaleString('en', { month: 'long' })}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+          {period !== 'day' && period !== 'overall' && period !== 'custom' && (
+            <Select value={String(year)} onValueChange={(value) => {
+              if (value) updatePeriod({ year: Number(value) });
+            }}>
+              <SelectTrigger className="h-9 w-24 rounded-lg border border-slate-200 bg-background text-sm font-semibold text-slate-800 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-200">
+                {year}
+              </SelectTrigger>
+              <SelectContent>
+                {filterYears.map((itemYear) => (
+                  <SelectItem key={itemYear} value={String(itemYear)}>
+                    {itemYear}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           {overview ? (
             <Button onClick={() => setIsTargetDialogOpen(true)} variant="outline" className="h-9 rounded-lg border-2 border-slate-300 dark:border-slate-800 bg-card hover:bg-slate-50 dark:hover:bg-slate-800/80 text-xs font-bold gap-1.5 px-3 cursor-pointer"><Target className="w-4 h-4 text-emerald-500 animate-pulse" />Set Targets</Button>
           ) : (
@@ -511,14 +698,17 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
         {cards.map(([title, value, target, expected, status, tone, icon, progressPercent]) => <ProgressCard key={title} title={title} value={value} target={target} expected={expected} status={status} tone={tone} icon={icon} progressPercent={progressPercent} />)}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {(dashboard?.insights ?? [
-          { tone: 'red' as const, title: 'Orders need dispatch attention', text: 'Fulfilled orders are trailing received orders. Review pending deliveries and assign the next dispatch action.', action: 'Review queue' },
-          { tone: 'emerald' as const, title: 'Product opportunity detected', text: 'Your top product continues to perform strongly. Keep sufficient stock available for the next sales cycle.', action: 'View details' },
-        ]).map((insight) => <InsightCard key={insight.title} title={overview ? insight.title : 'Action needed'} text={overview ? insight.text : 'Review the latest Commerce records and take the suggested next action.'} action={insight.action} tone={insight.tone} />)}
-      </div>
+      {!recsLoading && (
+        <SmartSuggestions recommendations={recommendationsData?.recommendations} isLoading={recsLoading} onSetTargets={() => setIsTargetDialogOpen(true)} />
+      )}
 
-      <BusinessOverviewAnalytics dashboard={dashboard} periodLabel={period === 'year' ? year : new Date(Number(year), Number(month) - 1).toLocaleString('en', { month: 'long', year: 'numeric' })} />
+      {(dashboard?.insights.length ?? 0) > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {dashboard!.insights.map((insight) => <InsightCard key={insight.title} title={insight.title} text={insight.text} action={insight.action} tone={insight.tone} />)}
+        </div>
+      )}
+
+      <BusinessOverviewAnalytics dashboard={dashboard} periodLabel={periodRangeLabel(period, year, month, day, customFrom, customTo)} />
       </>}
 
       <Dialog open={isTargetDialogOpen} onOpenChange={setIsTargetDialogOpen}>
@@ -526,7 +716,7 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
           <DialogHeader className="flex-row items-center justify-between border-b border-border pb-3">
             <div>
               <DialogTitle className="font-extrabold text-foreground flex items-center gap-2"><Target className="w-5 h-5 text-emerald-500" />Set Period Targets</DialogTitle>
-              <DialogDescription className="mt-0.5 text-[11px] font-bold uppercase tracking-wide">For {period === 'year' ? `${year} (Yearly)` : `${new Date(Number(year), Number(month) - 1).toLocaleString('en', { month: 'long', year: 'numeric' })} (Monthly)`}</DialogDescription>
+              <DialogDescription className="mt-0.5 text-[11px] font-bold uppercase tracking-wide">For {periodRangeLabel(period, year, month, day, customFrom, customTo)}</DialogDescription>
             </div>
             <Button aria-label="Close target settings" variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setIsTargetDialogOpen(false)}>✕</Button>
           </DialogHeader>

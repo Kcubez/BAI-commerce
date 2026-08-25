@@ -188,10 +188,15 @@ export const settingsSendersApi = {
 
 // ─── Commerce Dashboard API ─────────────────────────────────────────────────
 
+export type CommercePeriod = "overall" | "day" | "month" | "year" | "custom";
+
 export type CommerceDashboardParams = {
-  period: "month" | "year";
+  period: CommercePeriod;
   year: number;
   month: number;
+  day?: number;
+  from?: string;
+  to?: string;
 };
 
 export type CommerceTargetValues = {
@@ -221,7 +226,7 @@ export type CommerceDashboardInsight = {
 };
 
 export type CommerceDashboard = {
-  period: "month" | "year";
+  period: string;
   year: number;
   month: number;
   targets: CommerceTargetValues;
@@ -271,10 +276,7 @@ export type CommerceWorkspaceData = {
 
 export const commerceDashboardApi = {
   get: (params: CommerceDashboardParams) => {
-    const searchParams = new URLSearchParams();
-    searchParams.set("period", params.period);
-    searchParams.set("year", String(params.year));
-    searchParams.set("month", String(params.month));
+    const searchParams = commercePeriodQuery(params);
     return request<CommerceDashboard>(`/api/commerce/dashboard?${searchParams.toString()}`);
   },
   saveTargets: (data: SaveCommerceTargetsPayload) =>
@@ -282,13 +284,43 @@ export const commerceDashboardApi = {
       method: "PUT",
       body: data,
     }),
-  workspaces: (params: Pick<CommerceDashboardParams, "year" | "month">) => {
-    const searchParams = new URLSearchParams();
-    searchParams.set("year", String(params.year));
-    searchParams.set("month", String(params.month));
+  workspaces: (params: CommerceDashboardParams) => {
+    const searchParams = commercePeriodQuery(params);
     return request<CommerceWorkspaceData>(`/api/commerce/workspaces?${searchParams.toString()}`);
   },
 };
+
+export type CommerceActionRecommendation = {
+  area: "sales" | "finance" | "inventory" | "marketing" | "general";
+  severity: "urgent" | "warning" | "info";
+  title: string;
+  insight: string;
+  action: string;
+  actionType:
+    | "view_sales"
+    | "view_finance"
+    | "view_inventory"
+    | "view_marketing"
+    | "set_target_modal"
+    | "general_dashboard";
+};
+
+function commercePeriodQuery(params: CommerceDashboardParams) {
+  const searchParams = new URLSearchParams();
+  searchParams.set("period", params.period);
+  if (params.period !== "overall") {
+    searchParams.set("year", String(params.year));
+    if (params.period !== "year" && params.period !== "custom") {
+      searchParams.set("month", String(params.month));
+      if (params.period === "day" && params.day) searchParams.set("day", String(params.day));
+    }
+    if (params.period === "custom") {
+      if (params.from) searchParams.set("from", params.from);
+      if (params.to) searchParams.set("to", params.to);
+    }
+  }
+  return searchParams;
+}
 
 // ─── Demand Sheet API ───────────────────────────────────────────────────────
 

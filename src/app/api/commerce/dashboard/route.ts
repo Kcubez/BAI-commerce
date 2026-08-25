@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
 import { customerOwnedByUserOrAdmin, ownedByUserOrAdmin } from "@/lib/tenant-scope";
+import { buildTrendBuckets, elapsedRatio, resolvePeriodRange, targetAnchor, parsePeriodParams } from "@/lib/period-range";
 import type { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -12,30 +13,6 @@ const DEFAULT_TARGETS = {
   targetAppointments: 220,
   targetNewCustomers: 120,
 };
-
-const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function rangeFor(period: string, year: number, month: number) {
-  if (period === "year") {
-    return {
-      start: new Date(Date.UTC(year, 0, 1)),
-      end: new Date(Date.UTC(year + 1, 0, 1)),
-      labels: monthNames,
-    };
-  }
-
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 1));
-  return {
-    start,
-    end,
-    labels: Array.from({ length: 30 }, (_, index) => String(index + 1)),
-  };
-}
-
-function bucketIndex(date: Date, period: string) {
-  return period === "year" ? date.getUTCMonth() : Math.min(date.getUTCDate() - 1, 29);
-}
 
 function dealRevenue(deal: { quotedAmount: number | null; items: { quantity: number; unitPrice: number }[] }) {
   const itemTotal = deal.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
@@ -55,20 +32,13 @@ export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
-  const searchParams = req.nextUrl.searchParams;
-  const period = searchParams.get("period") === "year" ? "year" : "month";
-  const year = Number(searchParams.get("year"));
-  const month = Number(searchParams.get("month") || "1");
-
-  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-    return NextResponse.json({ message: "Invalid year parameter" }, { status: 400 });
-  }
-  if (period === "month" && (!Number.isInteger(month) || month < 1 || month > 12)) {
-    return NextResponse.json({ message: "Invalid month parameter" }, { status: 400 });
-  }
-
-  const { start, end, labels } = rangeFor(period, year, month);
-  const targetMonth = period === "year" ? 0 : month;
+  const resolved = parsePeriodParams(req.nextUrl.searchParams);
+  const periodLabel = resolved.period === "overall"
+    ? "Overall"
+    : resolved.period;
+  const { start, end } = resolvePeriodRange(resolved);
+  const buckets = buildTrendBuckets(resolved);
+  const anchor = targetAnchor(resolved);
   const userWhere = ownedByUserOrAdmin(session);
   const dateRange = { gte: start, lt: end };
   const wonDealWhere: Prisma.DealWhereInput = {
@@ -82,7 +52,8 @@ export async function GET(req: NextRequest) {
   };
 
   const [
-    targets,
+    monthTarget,
+    yearTarget,
     wonDeals,
     periodDeals,
     fulfilledOrders,
@@ -92,7 +63,10 @@ export async function GET(req: NextRequest) {
     recentMessages,
   ] = await Promise.all([
     prisma.periodTarget.findFirst({
-      where: { userId: session.user.id, period, year, month: targetMonth },
+      where: { userId: session.user.id, period: "month", year: anchor.year, month: anchor.month },
+    }),
+    prisma.periodTarget.findFirst({
+      where: { userId: session.user.id, period: "year", year: anchor.year, month: 0 },
     }),
     prisma.deal.findMany({
       where: wonDealWhere,
@@ -125,6 +99,7 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
+  const targets = monthTarget ?? yearTarget ?? undefined;
   const activeTargets = {
     targetSalesAmount: targets?.targetSalesAmount ?? DEFAULT_TARGETS.targetSalesAmount,
     targetExpenseAmount: targets?.targetExpenseAmount ?? DEFAULT_TARGETS.targetExpenseAmount,
@@ -139,17 +114,17 @@ export async function GET(req: NextRequest) {
     ? ((activeTargets.targetSalesAmount - activeTargets.targetExpenseAmount) / activeTargets.targetSalesAmount) * 100
     : 0;
 
-  const incomeTrend = labels.map((label) => ({ label, value: 0 }));
-  const orderTrend = labels.map((label) => ({ label, value: 0 }));
+  const incomeTrend = buckets.labels.map((label) => ({ label, value: 0 }));
+  const orderTrend = buckets.labels.map((label) => ({ label, value: 0 }));
 
   wonDeals.forEach((deal) => {
     const date = deal.wonAt ?? deal.createdAt;
-    const index = bucketIndex(date, period);
-    if (incomeTrend[index]) incomeTrend[index].value += dealRevenue(deal);
+    const index = buckets.bucketIndex(date);
+    if (index >= 0 && incomeTrend[index]) incomeTrend[index].value += dealRevenue(deal);
   });
   periodDeals.forEach((deal) => {
-    const index = bucketIndex(deal.createdAt, period);
-    if (orderTrend[index]) orderTrend[index].value += 1;
+    const index = buckets.bucketIndex(deal.createdAt);
+    if (index >= 0 && orderTrend[index]) orderTrend[index].value += 1;
   });
 
   const productMap = new Map<string, { name: string; sku: string | null; quantity: number; income: number }>();
@@ -165,18 +140,20 @@ export async function GET(req: NextRequest) {
   const topProducts = Array.from(productMap.values()).sort((a, b) => b.income - a.income).slice(0, 5);
   const topProduct = topProducts[0];
   const ordersReceived = periodDeals.length;
+  const ratio = elapsedRatio(start, end);
+  const expectedToDate = (target: number) => Math.round(target * ratio);
 
   return NextResponse.json({
-    period,
-    year,
-    month,
+    period: periodLabel,
+    year: resolved.year,
+    month: resolved.month,
     targets: activeTargets,
     kpis: [
       {
         title: "Revenue",
         value: formatAmount(revenue),
         target: `${formatAmount(activeTargets.targetSalesAmount)} MMK`,
-        expected: `Expected (Day 30): ${formatAmount(activeTargets.targetSalesAmount)}`,
+        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetSalesAmount))}`,
         status: revenue >= activeTargets.targetSalesAmount ? "On Track" : "Below Target",
         tone: revenue >= activeTargets.targetSalesAmount ? "emerald" : "red",
         icon: "DollarSign",
@@ -186,7 +163,7 @@ export async function GET(req: NextRequest) {
         title: "Expense Limit",
         value: formatAmount(expense),
         target: `${formatAmount(activeTargets.targetExpenseAmount)} MMK`,
-        expected: `Expected: ${formatAmount(activeTargets.targetExpenseAmount)}`,
+        expected: `Budget to date: ${formatAmount(expectedToDate(activeTargets.targetExpenseAmount))}`,
         status: expense <= activeTargets.targetExpenseAmount ? "On Track" : "Over Limit",
         tone: expense <= activeTargets.targetExpenseAmount ? "emerald" : "red",
         icon: "Wallet",
@@ -206,7 +183,7 @@ export async function GET(req: NextRequest) {
         title: "Orders Received",
         value: formatAmount(ordersReceived),
         target: formatAmount(activeTargets.targetDemandCount),
-        expected: `Expected (Day 30): ${formatAmount(activeTargets.targetDemandCount)}`,
+        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetDemandCount))}`,
         status: ordersReceived >= activeTargets.targetDemandCount ? "On Track" : "Below Target",
         tone: ordersReceived >= activeTargets.targetDemandCount ? "emerald" : "red",
         icon: "Megaphone",
@@ -216,7 +193,7 @@ export async function GET(req: NextRequest) {
         title: "Orders Fulfilled",
         value: formatAmount(fulfilledOrders),
         target: formatAmount(activeTargets.targetAppointments),
-        expected: `Expected (Day 30): ${formatAmount(activeTargets.targetAppointments)}`,
+        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetAppointments))}`,
         status: fulfilledOrders >= activeTargets.targetAppointments ? "On Track" : "Below Target",
         tone: fulfilledOrders >= activeTargets.targetAppointments ? "emerald" : "red",
         icon: "CalendarCheck",
@@ -226,7 +203,7 @@ export async function GET(req: NextRequest) {
         title: "New Customers",
         value: formatAmount(newCustomers),
         target: `${formatAmount(activeTargets.targetNewCustomers)} Target`,
-        expected: `Expected (Day 30): ${formatAmount(activeTargets.targetNewCustomers)}`,
+        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetNewCustomers))}`,
         status: newCustomers >= activeTargets.targetNewCustomers ? "On Track" : "Below Target",
         tone: newCustomers >= activeTargets.targetNewCustomers ? "emerald" : "red",
         icon: "Users",

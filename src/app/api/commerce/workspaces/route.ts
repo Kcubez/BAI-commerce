@@ -2,23 +2,16 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
 import { customerOwnedByUserOrAdmin, ownedByUserOrAdmin } from "@/lib/tenant-scope";
+import { monthNames, parsePeriodParams, resolvePeriodRange } from "@/lib/period-range";
 import { NextRequest, NextResponse } from "next/server";
 
-const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-function selectedRange(year: number, month: number) {
+function sixMonthRange(end: Date) {
+  const startMonthIndex = end.getUTCMonth() - 6;
+  const start = new Date(Date.UTC(end.getUTCFullYear(), startMonthIndex, 1));
   return {
-    start: new Date(Date.UTC(year, month - 1, 1)),
-    end: new Date(Date.UTC(year, month, 1)),
-  };
-}
-
-function sixMonthRange(year: number, month: number) {
-  const startMonthIndex = month - 6;
-  return {
-    start: new Date(Date.UTC(year, startMonthIndex, 1)),
+    start,
     labels: Array.from({ length: 6 }, (_, index) => {
-      const date = new Date(Date.UTC(year, startMonthIndex + index, 1));
+      const date = new Date(Date.UTC(start.getUTCFullYear(), startMonthIndex + index, 1));
       return monthNames[date.getUTCMonth()];
     }),
   };
@@ -46,14 +39,13 @@ export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
 
-  const year = Number(req.nextUrl.searchParams.get("year"));
-  const month = Number(req.nextUrl.searchParams.get("month") || "1");
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+  const resolved = parsePeriodParams(req.nextUrl.searchParams);
+  const { start, end } = resolvePeriodRange(resolved);
+  if (!(start < end)) {
     return NextResponse.json({ message: "Invalid period" }, { status: 400 });
   }
 
-  const { start, end } = selectedRange(year, month);
-  const timeline = sixMonthRange(year, month);
+  const timeline = sixMonthRange(end);
   const userWhere = ownedByUserOrAdmin(session);
   const dateRange = { gte: start, lt: end };
   const sixMonthDateRange = { gte: timeline.start, lt: end };
@@ -168,7 +160,8 @@ export async function GET(req: NextRequest) {
   const adSpend = marketingMetrics.reduce((sum, item) => sum + item.spend, 0);
   const reach = marketingMetrics.reduce((sum, item) => sum + (item.reach ?? 0), 0);
   const adOrders = marketingMetrics.reduce((sum, item) => sum + (item.adDrivenOrders ?? 0), 0);
-  const marketingChart = marketingMetrics.map((item) => ({
+  // Keep the chart readable on long ranges by showing the most recent entries.
+  const marketingChart = marketingMetrics.slice(-62).map((item) => ({
     label: item.metricDate.toISOString().slice(5, 10),
     spend: item.spend,
     orders: item.adDrivenOrders ?? 0,
