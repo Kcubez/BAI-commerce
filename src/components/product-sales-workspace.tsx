@@ -309,7 +309,7 @@ function BusinessOverviewAnalytics({ periodLabel, dashboard }: { periodLabel: st
 function FinanceKpiCard({ label, value, icon: Icon, accentClass, unit }: { label: string; value: string; icon: LucideIcon; accentClass: string; unit?: string }) {
   return (
     <section className={`bg-card border-2 border-slate-200 dark:border-slate-800 shadow-sm rounded-xl ${accentClass}`}>
-      <div className="p-6 flex flex-col justify-center h-40"><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider mb-2">{label}</p><h3 className="flex items-baseline gap-1.5 whitespace-nowrap text-2xl font-black text-slate-900 tracking-tight dark:text-slate-100"><span>{value}</span>{unit && <span className="text-xs font-bold text-slate-400">{unit}</span>}</h3></div><div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-900 flex items-center justify-center text-slate-400"><Icon className="w-4 h-4" /></div></div></div>
+      <div className="flex h-28 flex-col justify-center p-4"><div className="flex items-start justify-between gap-3"><div><p className="mb-2 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">{label}</p><h3 className="flex items-baseline gap-1.5 whitespace-nowrap text-2xl font-black tracking-tight text-slate-900 dark:text-slate-100"><span>{value}</span>{unit && <span className="text-xs font-bold text-slate-400">{unit}</span>}</h3></div><div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-slate-900"><Icon className="h-4 w-4" /></div></div></div>
     </section>
   );
 }
@@ -410,9 +410,32 @@ function FinanceWorkspace({ data, recommendations, isRecommendationsLoading }: {
   // Finance uses the same deterministic Burmese heuristic feed as the main
   // dashboard, limited to recommendations actionable from this workspace.
   const financeRecommendations = recommendations?.filter((recommendation) => recommendation.area === 'finance') ?? [];
+  const refreshFinanceRecords = () => window.location.reload();
+  const addFinanceRecord = async () => {
+    const title = window.prompt('Record description'); if (!title) return;
+    const amountValue = window.prompt('Amount (MMK)'); const amount = Number(amountValue);
+    if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a valid positive amount');
+    const response = await fetch('/api/commerce/finance/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, amount, accountingType: 'operating_expense', cashType: 'Expense' }) });
+    if (!response.ok) return toast.error('Could not add finance record');
+    toast.success('Finance record added'); refreshFinanceRecords();
+  };
+  useEffect(() => {
+    const onAction = async (event: MouseEvent) => {
+      const button = (event.target as HTMLElement).closest('button[aria-label]'); const label = button?.getAttribute('aria-label') || '';
+      const description = label.replace(/^(Edit|Delete) /, ''); const record = records.find((item) => item.description === description);
+      if (!record || (!label.startsWith('Edit ') && !label.startsWith('Delete '))) return;
+      event.preventDefault(); event.stopPropagation();
+      if (label.startsWith('Delete ')) { if (!window.confirm(`Delete ${description}?`)) return; const response = await fetch(`/api/commerce/finance/entries/${record.id}`, { method: 'DELETE' }); if (!response.ok) return toast.error('Could not delete finance record'); toast.success('Finance record deleted'); refreshFinanceRecords(); return; }
+      const title = window.prompt('Record description', record.description); if (!title) return;
+      const amountValue = window.prompt('Amount (MMK)', record.amount.replace(/[^0-9.]/g, '')); const value = Number(amountValue); if (!Number.isFinite(value) || value <= 0) return toast.error('Enter a valid positive amount');
+      const response = await fetch(`/api/commerce/finance/entries/${record.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, amount: value, accountingType: record.accountingType || 'operating_expense', status: record.status || 'recorded' }) }); if (!response.ok) return toast.error('Could not update finance record'); toast.success('Finance record updated'); refreshFinanceRecords();
+    };
+    document.addEventListener('click', onAction, true); return () => document.removeEventListener('click', onAction, true);
+  }, [records]);
   return (
     <div className="flex flex-col gap-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Revenue" value={amount(data?.kpis.revenue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Total Expense" value={amount(data?.kpis.expense ?? 0)} unit="MMK" icon={ReceiptText} accentClass="border-l-4 border-l-red-500" /><FinanceKpiCard label="Profit / Loss" value={amount(data?.kpis.profit ?? 0)} unit="MMK" icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /><FinanceKpiCard label="Profit Margin" value={`${(data?.kpis.profitMargin ?? 0).toFixed(1)}%`} icon={Percent} accentClass="border-l-4 border-l-emerald-500" /></div>
+      <div className="order-30 flex justify-end -mb-6"><Button size="sm" className="h-10 cursor-pointer bg-sky-600 px-4 hover:bg-sky-700" onClick={addFinanceRecord}>+ Add record</Button></div>
       <div className="order-30 -mb-6">
       {accountingEntries.length > 0 && <section className="rounded-xl border-2 border-slate-200 bg-card p-5 shadow-sm dark:border-slate-800"><div className="mb-5"><h2 className="text-lg font-black text-slate-900 dark:text-slate-100">Finance Records</h2><p className="mt-1 text-sm text-muted-foreground">Income, expenses, accounting category, status, counterparty, due date, voucher, and payment context in one table.</p></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{[['operating_expense', 'Accounting Expenses', ReceiptText, 'border-l-red-500'], ['receivable', 'Open Receivables', Users, 'border-l-cyan-500'], ['debt', 'Open Debt', Wallet, 'border-l-rose-500'], ['voucher', 'Vouchers', ReceiptText, 'border-l-slate-500'], ['salary', 'Salary', Wallet, 'border-l-sky-500'], ['cogs', 'COGS', Package, 'border-l-violet-500'], ['payment', 'Payments', DollarSign, 'border-l-emerald-500'], ['owner_capital', 'Owner Capital', Wallet, 'border-l-indigo-500']].map(([key, label, Icon, accent]) => <FinanceKpiCard key={key as string} label={label as string} value={key === 'voucher' ? String(accountingEntries.filter((entry) => entry.accountingType === key).length) : amount(data?.accounting.totals[key as string] ?? 0)} unit={key === 'voucher' ? 'records' : 'MMK'} icon={Icon as LucideIcon} accentClass={`border-l-4 ${accent}`} />)}</div></section>}
       {accountingEntries.length === 0 && <section className="rounded-xl border-2 border-slate-200 bg-card p-5 shadow-sm dark:border-slate-800"><div className="mb-5"><h2 className="flex items-center gap-2 text-lg font-black text-slate-900 dark:text-slate-100"><ReceiptText className="h-5 w-5 text-sky-600" />Finance Records</h2><p className="mt-1 text-sm text-muted-foreground">Income, expenses, accounting category, status, counterparty, due date, voucher, and payment context in one table.</p></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{[['Accounting Expenses', ReceiptText, 'border-l-red-500', 'MMK'], ['Open Receivables', Users, 'border-l-cyan-500', 'MMK'], ['Open Debt', Wallet, 'border-l-rose-500', 'MMK'], ['Vouchers', ReceiptText, 'border-l-slate-500', 'records'], ['Salary', Wallet, 'border-l-sky-500', 'MMK'], ['COGS', Package, 'border-l-violet-500', 'MMK'], ['Payments', DollarSign, 'border-l-emerald-500', 'MMK'], ['Owner Capital', Wallet, 'border-l-indigo-500', 'MMK']].map(([label, Icon, accent, unit]) => <FinanceKpiCard key={label as string} label={label as string} value="0" unit={unit as string} icon={Icon as LucideIcon} accentClass={`border-l-4 ${accent}`} />)}</div></section>}
