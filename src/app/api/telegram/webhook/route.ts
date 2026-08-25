@@ -9,6 +9,20 @@ import {
 } from "@/lib/demand-parser";
 import { analyzeDemandRecord } from "@/lib/demand-analysis";
 import { parseCommerceMessageWithGemini } from "@/lib/commerce-parser";
+import {
+  createMarketingMetricsFromRows,
+  createSalesOrdersFromRows,
+  isMarketingMetricsHeaders,
+  isProductCatalogHeaders,
+  isSalesOrdersHeaders,
+  parseMarketingMetricsRows,
+  parseProductCatalogRows,
+  parseSalesOrderRows,
+  upsertProductsFromRows,
+  type ParsedMarketingRow,
+  type ParsedProductRow,
+  type ParsedSalesOrderRow,
+} from "@/lib/commerce-import";
 import { NextRequest, NextResponse, after } from "next/server";
 import { sendOTPEmail } from "@/lib/email";
 import { notDeleted, restoreData } from "@/lib/soft-delete";
@@ -449,11 +463,10 @@ function getPlainTemplateTextForMode(mode: string | null | undefined): string {
         "Date:",
         "Customer Name:",
         "Phone:",
-        "Company:",
-        "Service Name:",
-        "Service Amount:",
-        "Service Qty:",
-        "Follow-up Date:",
+        "Product Name:",
+        "Product Code:",
+        "Quantity:",
+        "Unit Price:",
         "Note:",
       ].join("\n");
   }
@@ -628,7 +641,8 @@ function getFormatPrompt(): string {
   return [
     "📈 ━━━━━━━━━━━━━━━━━━━━",
     "",
-    "  <b>Sales & Marketing Mode</b>",
+    "  <b>Sales Mode</b>",
+    "  <i>Order / lead မှတ်တမ်း</i>",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
@@ -640,15 +654,17 @@ function getFormatPrompt(): string {
     "• Date: [YYYY-MM-DD]",
     "• Customer Name: [နာမည်]",
     "• Phone: [ဖုန်းနံပါတ်]",
-    "• Company: [ကုမ္ပဏီအမည်]",
-    "• Service Name: [ဝန်ဆောင်မှု]",
-    "• Service Amount: [ငွေ]",
-    "• Service Qty: [အရေအတွက်]",
-    "• Follow-up Date: [YYYY-MM-DD]",
+    "• Product Name: [ပစ္စည်းအမည်]",
+    "• Product Code: [SKU]",
+    "• Quantity: [အရေအတွက်]",
+    "• Unit Price: [တစ်ခုဈေး]",
     "• Note: [မှတ်ချက်]",
     "</pre>",
     "",
-    "💡 <i>မလိုအပ်သော စာကြောင်းများ ချန်လှပ်ထားနိုင်ပါသည်</i>",
+    "📊 <b>Excel columns:</b>",
+    "<pre>Date | Customer Name | Phone | Product Name | Product Code | Quantity | Unit Price | Stage | Fulfillment Status | Notes</pre>",
+    "",
+    "💡 <i>Stage: New Lead / Quoted / Pending / Won / Lost</i>",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
   ].join("\n");
@@ -663,8 +679,7 @@ function getCustomerServiceFormatPrompt(): string {
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
-    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
+    "📄 စာသားဖြင့် တိုက်ရိုက်ပို့နိုင်ပါသည်",
     "",
     "📝 <b>စာသားပုံစံ:</b>",
     "<pre>",
@@ -709,6 +724,9 @@ function getFinanceTransactionsFormatPrompt(): string {
     "• Notes: [မှတ်ချက်]",
     "</pre>",
     "",
+    "📊 <b>Excel columns:</b>",
+    "<pre>Date | Description | Category | Type | Amount (MMK) | Payment Method | Reference | Notes</pre>",
+    "",
     "━━━━━━━━━━━━━━━━━━━━",
   ].join("\n");
 }
@@ -745,7 +763,7 @@ function getFormatPromptForMode(mode: string | null | undefined): string {
 function getFormatHintFooter(mode: string): string {
   let fields = "";
   if (mode === 'demand_report') {
-    fields = "Date • Customer Name • Phone • Company • Service Name • Service Amount • Service Qty • Follow-up Date • Note";
+    fields = "Date • Customer Name • Phone • Product Name • Product Code • Quantity • Unit Price • Stage • Fulfillment Status • Note";
   } else if (mode === 'customer_service') {
     fields = "Date • Customer Name • Company • Phone • Email • Purchased Service • Purchase Amount MMK • Status • Next Follow Up • CSAT • Last Contact Note";
   } else if (mode === 'finance_transactions') {
@@ -835,13 +853,13 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
       return [
         "📈 ━━━━━━━━━━━━━━━━━━━━",
         "",
-        "  <b>Sales & Marketing Template</b>",
+        "  <b>Sales Orders Template</b>",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
         "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
         "",
-        "<code>• Date: \n• Customer Name: \n• Phone: \n• Company: \n• Service Name: \n• Service Amount: \n• Service Qty: \n• Follow-up Date: \n• Note: </code>",
+        "<code>• Date: \n• Customer Name: \n• Phone: \n• Product Name: \n• Product Code: \n• Quantity: \n• Unit Price: \n• Note: </code>",
       ].join("\n");
     case 'customer_service':
       return [
@@ -1298,6 +1316,7 @@ async function processFileInBackground({
   downloadedBuffer,
   fileInfo,
   settings,
+  activeMode,
   chatId,
   telegramMessageId,
   progressMsgId,
@@ -1305,93 +1324,149 @@ async function processFileInBackground({
   downloadedBuffer: Buffer;
   fileInfo: { fileName: string; mimeType: string; fileSize: number };
   settings: { userId: string | null; botToken: string | null; geminiApiKey: string | null; geminiModel: string | null };
+  activeMode: string | null;
   chatId: bigint;
   telegramMessageId: string;
   progressMsgId: number | null;
 }) {
+  const isSpreadsheet = fileInfo.mimeType.includes("sheet") ||
+    fileInfo.mimeType.includes("excel") ||
+    fileInfo.mimeType.includes("csv") ||
+    fileInfo.fileName.endsWith(".xlsx") ||
+    fileInfo.fileName.endsWith(".xls") ||
+    fileInfo.fileName.endsWith(".xlsm") ||
+    fileInfo.fileName.endsWith(".csv");
+
   try {
-    const isSpreadsheet = fileInfo.mimeType.includes("sheet") ||
-      fileInfo.mimeType.includes("excel") ||
-      fileInfo.mimeType.includes("csv") ||
-      fileInfo.fileName.endsWith(".xlsx") ||
-      fileInfo.fileName.endsWith(".xls") ||
-      fileInfo.fileName.endsWith(".xlsm") ||
-      fileInfo.fileName.endsWith(".csv");
-
-    let isFinanceFile = false;
+    type ImportKind = 'finance' | 'product_catalog' | 'marketing_metrics' | 'sales_orders';
+    let importKind: ImportKind | null = null;
     let parsedFinanceRecords: FinanceRecord[] = [];
+    let parsedProductRows: ParsedProductRow[] = [];
+    let parsedMarketingRows: ParsedMarketingRow[] = [];
+    let parsedSalesRows: ParsedSalesOrderRow[] = [];
 
-    if (isSpreadsheet) {
-      try {
-        const workbook = XLSX.read(downloadedBuffer, { type: 'buffer', cellDates: true });
-        if (workbook.SheetNames.length > 0) {
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1 });
-          if (rows.length > 0 && Array.isArray(rows[0])) {
-            const headers = rows[0].map(h => String(h || ''));
-            if (isFinanceRecordsHeaders(headers)) {
-              isFinanceFile = true;
-              parsedFinanceRecords = parseFinanceRecordsSpreadsheet(downloadedBuffer);
-            }
-          }
+  if (isSpreadsheet) {
+    try {
+      const workbook = XLSX.read(downloadedBuffer, { type: 'buffer', cellDates: true });
+      if (workbook.SheetNames.length > 0) {
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1 });
+        if (rows.length > 0 && Array.isArray(rows[0])) {
+          const headers = rows[0].map(h => String(h || ''));
+          if (isFinanceRecordsHeaders(headers)) importKind = 'finance';
+          else if (isProductCatalogHeaders(headers)) importKind = 'product_catalog';
+          else if (isMarketingMetricsHeaders(headers)) importKind = 'marketing_metrics';
+          else if (isSalesOrdersHeaders(headers)) importKind = 'sales_orders';
         }
-      } catch (err) {
-        console.error("Error checking headers for spreadsheet types:", err);
       }
+    } catch (err) {
+      console.error("Error checking headers for spreadsheet types:", err);
     }
 
-    if (isFinanceFile) {
-      if (!settings.userId) {
-        throw new Error("Finance import requires a linked business owner user.");
+    // Mode-based fallback when header sniffing could not classify the file.
+    if (!importKind && activeMode === 'finance_transactions') importKind = 'finance';
+    else if (!importKind && activeMode === 'demand_report') importKind = 'sales_orders';
+
+    try {
+      switch (importKind) {
+        case 'finance':
+          parsedFinanceRecords = parseFinanceRecordsSpreadsheet(downloadedBuffer);
+          break;
+        case 'product_catalog':
+          parsedProductRows = parseProductCatalogRows(downloadedBuffer);
+          break;
+        case 'marketing_metrics':
+          parsedMarketingRows = parseMarketingMetricsRows(downloadedBuffer);
+          break;
+        case 'sales_orders':
+          parsedSalesRows = parseSalesOrderRows(downloadedBuffer);
+          break;
       }
+    } catch (err) {
+      console.error(`Error parsing ${importKind} spreadsheet:`, err);
+    }
+  }
+
+  if (importKind) {
+    const parsedRowCount =
+      importKind === 'finance' ? parsedFinanceRecords.length :
+      importKind === 'product_catalog' ? parsedProductRows.length :
+      importKind === 'marketing_metrics' ? parsedMarketingRows.length :
+      parsedSalesRows.length;
+
+    if (!settings.userId) {
+      throw new Error("Commerce file import requires a linked business owner user.");
+    }
+
+    if (parsedRowCount === 0) {
+      const emptyText = [
+        "⚠️ <b>ဖိုင်ထဲတွင် တင်သွင်းနိုင်သော အချက်အလက် မတွေ့ပါ။</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        `📄 <b>ဖိုင်အမည်:</b> <code>${fileInfo.fileName}</code>`,
+        "",
+        getExpectedColumnsHint(importKind),
+      ].join("\n");
+      await sendOrEditMessage({ botToken: settings.botToken, chatId, progressMsgId, text: emptyText });
+      return;
+    }
+
+    let createdCount = 0;
+    if (importKind === 'finance') {
       const created = await Promise.all(parsedFinanceRecords.map((rec) => createFinanceRecord({
         record: rec,
         userId: settings.userId!,
         sourceMessageId: telegramMessageId,
       })));
-      const createdCount = created.filter(Boolean).length;
-
-      if (progressMsgId) {
-        await editTelegramMessage({
-          botToken: settings.botToken,
-          chatId,
-          messageId: progressMsgId,
-          text: [
-            "✅ <b>ဘဏ္ဍာရေး ငွေသွင်း/ငွေထုတ် မှတ်တမ်းများ တင်သွင်းပြီးပါပြီ</b>",
-            "━━━━━━━━━━━━━━━━━━━━",
-            `📄 <b>ဖိုင်အမည်:</b> <code>${fileInfo.fileName}</code>`,
-            `📊 <b>အရေအတွက်:</b> <code>${createdCount}</code> စောင်ကို Commerce Finance ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
-          ].join("\n"),
-        });
-      }
-      return;
+      createdCount = created.filter(Boolean).length;
+    } else if (importKind === 'product_catalog') {
+      createdCount = await upsertProductsFromRows(parsedProductRows, settings.userId);
+    } else if (importKind === 'marketing_metrics') {
+      createdCount = await createMarketingMetricsFromRows(parsedMarketingRows, settings.userId);
+    } else if (importKind === 'sales_orders') {
+      createdCount = await createSalesOrdersFromRows(parsedSalesRows, settings.userId);
     }
 
-    const unsupportedText = [
-      "⚠️ <b>Commerce file import ကို ဒီ mode အတွက် မဖွင့်ထားသေးပါ။</b>",
-      "━━━━━━━━━━━━━━━━━━━━",
-      `📄 <b>ဖိုင်အမည်:</b> <code>${fileInfo.fileName}</code>`,
-      "",
-      "လက်ရှိ support:",
-      "• Finance Transactions Excel/CSV",
-      "• Sales / Customer Service text messages",
-      "",
-      "Sales spreadsheet import ကို Commerce Deal/Product format နဲ့ နောက် phase မှာသီးသန့်ထည့်ပါမယ်။",
-    ].join("\n");
+    const successTitle: Record<ImportKind, string> = {
+      finance: "✅ <b>ဘဏ္ဍာရေး ငွေသွင်း/ငွေထုတ် မှတ်တမ်းများ တင်သွင်းပြီးပါပြီ</b>",
+      product_catalog: "✅ <b>Product Catalog / Inventory တင်သွင်းပြီးပါပြီ</b>",
+      marketing_metrics: "✅ <b>Marketing Metrics တင်သွင်းပြီးပါပြီ</b>",
+      sales_orders: "✅ <b>Sales Orders တင်သွင်းပြီးပါပြီ</b>",
+    };
+    const successBody: Record<ImportKind, string> = {
+      finance: `📊 <b>အရေအတွက်:</b> <code>${createdCount}</code> စောင်ကို Commerce Finance ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
+      product_catalog: `📦 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Inventory ထဲသို့ update လုပ်ပြီးပါပြီ။`,
+      marketing_metrics: `📈 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Marketing Metrics ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
+      sales_orders: `🛒 <b>အရေအတွက်:</b> <code>${createdCount}</code> orders ကို Sales module ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
+    };
+
     if (progressMsgId) {
       await editTelegramMessage({
         botToken: settings.botToken,
         chatId,
         messageId: progressMsgId,
-        text: unsupportedText,
-      });
-    } else {
-      await sendTelegramMessage({
-        botToken: settings.botToken,
-        chatId,
-        text: unsupportedText,
+        text: [
+          successTitle[importKind],
+          "━━━━━━━━━━━━━━━━━━━━",
+          `📄 <b>ဖိုင်အမည်:</b> <code>${fileInfo.fileName}</code>`,
+          successBody[importKind],
+        ].join("\n"),
       });
     }
+    return;
+  }
+
+  const unsupportedText = [
+    "⚠️ <b>ဒီဖိုင်အမျိုးအစားကို တင်သွင်း၍ မရပါ။</b>",
+    "━━━━━━━━━━━━━━━━━━━━",
+    `📄 <b>ဖိုင်အမည်:</b> <code>${fileInfo.fileName}</code>`,
+    "",
+    "လက်ရှိ support လုပ်သော Excel/CSV formats:",
+    "• Finance Transactions — Date, Description, Category, Type, Amount (MMK), Payment Method, Reference, Notes",
+    "• Product Catalog — Product Code, Product Name, Category, Unit Cost, Selling Price, Stock Qty, Low Stock Threshold",
+    "• Marketing Metrics — Date, Channel, Spend, Reach, Impressions, Ad-driven Orders, Notes",
+    "• Sales Orders — Date, Customer Name, Phone, Product Name, Product Code, Quantity, Unit Price, Stage, Fulfillment Status, Notes",
+  ].join("\n");
+  await sendOrEditMessage({ botToken: settings.botToken, chatId, progressMsgId, text: unsupportedText });
   } catch (err) {
     console.error('Background file processing error:', err);
     const errMessage = err instanceof Error ? err.message : String(err);
@@ -1404,20 +1479,38 @@ async function processFileInBackground({
       "🔍 <b>အသေးစိတ် ချို့ယွင်းချက်:</b>",
       `<code>${errMessage}</code>`,
     ].join("\n");
-    if (progressMsgId) {
-      await editTelegramMessage({
-        botToken: settings.botToken,
-        chatId,
-        messageId: progressMsgId,
-        text: errorText,
-      });
-    } else {
-      await sendTelegramMessage({
-        botToken: settings.botToken,
-        chatId,
-        text: errorText,
-      });
-    }
+    await sendOrEditMessage({ botToken: settings.botToken, chatId, progressMsgId, text: errorText });
+  }
+}
+
+function getExpectedColumnsHint(kind: 'finance' | 'product_catalog' | 'marketing_metrics' | 'sales_orders'): string {
+  switch (kind) {
+    case 'finance':
+      return "💡 Columns: Date • Description • Category • Type • Amount (MMK) • Payment Method • Reference • Notes";
+    case 'product_catalog':
+      return "💡 Columns: Product Code • Product Name • Category • Unit Cost • Selling Price • Stock Qty • Low Stock Threshold";
+    case 'marketing_metrics':
+      return "💡 Columns: Date • Channel • Spend • Reach • Impressions • Ad-driven Orders • Notes";
+    case 'sales_orders':
+      return "💡 Columns: Date • Customer Name • Phone • Product Name • Product Code • Quantity • Unit Price • Stage • Fulfillment Status • Notes";
+  }
+}
+
+async function sendOrEditMessage({
+  botToken,
+  chatId,
+  progressMsgId,
+  text,
+}: {
+  botToken: string | null | undefined;
+  chatId: bigint;
+  progressMsgId: number | null;
+  text: string;
+}) {
+  if (progressMsgId) {
+    await editTelegramMessage({ botToken, chatId, messageId: progressMsgId, text });
+  } else {
+    await sendTelegramMessage({ botToken, chatId, text });
   }
 }
 
@@ -2296,6 +2389,7 @@ export async function POST(req: NextRequest) {
             downloadedBuffer: downloaded.buffer,
             fileInfo,
             settings,
+            activeMode,
             chatId,
             telegramMessageId: telegramMessage.id,
             progressMsgId,
