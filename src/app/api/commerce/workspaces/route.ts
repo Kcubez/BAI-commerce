@@ -175,8 +175,8 @@ export async function GET(req: NextRequest) {
 
   const productSales = new Map<string, { name: string; sku: string | null; orders: number; income: number }>();
   wonDeals.forEach((deal) => deal.items.forEach((item) => {
-    const key = item.sku || item.productName;
-    const current = productSales.get(key) ?? { name: item.productName, sku: item.sku, orders: 0, income: 0 };
+    const key = item.productName.trim().toLowerCase();
+    const current = productSales.get(key) ?? { name: item.productName.trim(), sku: item.sku, orders: 0, income: 0 };
     current.orders += item.quantity;
     current.income += item.quantity * item.unitPrice;
     productSales.set(key, current);
@@ -250,10 +250,16 @@ export async function GET(req: NextRequest) {
     },
     inventory: {
       kpis: { totalProducts: products.length, lowStockItems: lowStockProducts.length, outOfStock: outOfStockProducts.length, inventoryValue },
-      products: products.slice(0, 20).map((product) => ({
+      products: products.map((product) => ({
         id: product.id,
         name: product.name,
         productCode: product.sku,
+        sku: product.sku,
+        category: product.category,
+        unitCost: product.unitCost,
+        sellingPrice: product.sellingPrice,
+        stockQty: product.stockQty,
+        lowStockThreshold: product.lowStockThreshold,
         stockLevel: `${product.stockQty} in stock (min ${product.lowStockThreshold})`,
         status: product.stockQty <= 0 ? "Out of Stock" : product.stockQty <= product.lowStockThreshold ? "Low Stock" : "In Stock",
       })),

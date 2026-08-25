@@ -11,6 +11,8 @@ import {
   Bot,
   CalendarCheck,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   ClipboardList,
   DollarSign,
@@ -431,7 +433,7 @@ function BusinessOverviewAnalytics({ periodLabel, dashboard }: { periodLabel: st
             <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center"><Trophy className="text-amber-500 w-4 h-4" /></div>
             <h3 className="font-bold text-foreground">Top Performing Products</h3>
           </div>
-          <div className="overflow-x-auto flex-1"><table className="w-full text-left text-sm"><thead><tr className="text-muted-foreground uppercase text-[10px] font-extrabold tracking-wider border-b-2 border-border"><th className="pb-3 pt-2">Product</th><th className="pb-3 pt-2 text-center">Qty</th><th className="pb-3 pt-2 text-right">Income (MMK)</th></tr></thead><tbody className="divide-y-2 divide-border/50">{products.length ? products.map((product) => <tr key={product.sku ?? product.name} className="hover:bg-muted/30 transition"><td className="py-3.5 font-bold text-foreground">{product.name}</td><td className="py-3.5 text-center text-muted-foreground font-bold">{product.quantity}</td><td className="py-3.5 text-right font-extrabold text-sky-600 dark:text-sky-400">{amount(product.income)}</td></tr>) : <tr><td colSpan={3} className="py-8 text-center text-sm font-semibold text-muted-foreground">No product sales yet for this period.</td></tr>}</tbody></table></div>
+          <div className="overflow-x-auto flex-1"><table className="w-full text-left text-sm"><thead><tr className="text-muted-foreground uppercase text-[10px] font-extrabold tracking-wider border-b-2 border-border"><th className="pb-3 pt-2">Product</th><th className="pb-3 pt-2 text-center">Qty</th><th className="pb-3 pt-2 text-right">Income (MMK)</th></tr></thead><tbody className="divide-y-2 divide-border/50">{products.length ? products.map((product, idx) => <tr key={`${product.sku ?? product.name}-${idx}`} className="hover:bg-muted/30 transition"><td className="py-3.5 font-bold text-foreground">{product.name}</td><td className="py-3.5 text-center text-muted-foreground font-bold">{product.quantity}</td><td className="py-3.5 text-right font-extrabold text-sky-600 dark:text-sky-400">{amount(product.income)}</td></tr>) : <tr><td colSpan={3} className="py-8 text-center text-sm font-semibold text-muted-foreground">No product sales yet for this period.</td></tr>}</tbody></table></div>
         </section>
         <section className="p-6 flex-1 flex flex-col bg-slate-800 dark:bg-slate-900 border-none text-slate-300 shadow-xl relative overflow-hidden rounded-xl">
           <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-3 border-b border-slate-700 pb-4 z-10 relative"><span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]" />Live Intelligence Data</h3>
@@ -500,6 +502,7 @@ function ExpenseBreakdownChart({ items }: { items: [string, number, number, stri
 }
 
 function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [string, number, number])[] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const isEmpty = weekly.every(([, spend, orders]) => Number(spend) === 0 && Number(orders) === 0);
   const chartLeft = 58;
   const chartRight = 658;
@@ -511,29 +514,98 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
   const orderPoints = weekly.map(([, , orders], index) => `${chartLeft + 20 + index * slot},${chartBottom - (Number(orders) / maxOrders) * (chartBottom - chartTop)}`).join(' ');
   const spendLabels = isEmpty ? [4, 3, 2, 1, 0] : Array.from({ length: 5 }, (_, index) => Math.round(maxSpend - (maxSpend / 4) * index));
   const orderLabels = isEmpty ? [4, 3, 2, 1, 0] : Array.from({ length: 5 }, (_, index) => Math.round(maxOrders - (maxOrders / 4) * index));
+  const hovered = hoveredIndex !== null && weekly[hoveredIndex] ? weekly[hoveredIndex] : null;
 
   return (
-    <svg className="h-full w-full overflow-visible" viewBox="0 0 680 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ad spend compared to ad driven orders">
-      {[42, 88, 134, 180, 226].map((y) => <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#e2e8f0" className="dark:stroke-slate-800" />)}
-      {weekly.map((_, index) => {
-        const x = chartLeft + 20 + index * slot;
-        return <line key={`grid-${index}`} x1={x} x2={x} y1={chartTop} y2={chartBottom} stroke="#f8fafc" className="dark:stroke-slate-900" />;
-      })}
-      {spendLabels.map((value, index) => <text key={`${value}-${index}`} x="50" y={46 + index * 46} textAnchor="end" className="fill-slate-500 font-mono" style={{ fontSize: '9px' }}>{value.toLocaleString()}</text>)}
-      {orderLabels.map((value, index) => <text key={`${value}-${index}`} x="668" y={46 + index * 46} textAnchor="start" className="fill-emerald-600 font-bold font-mono" style={{ fontSize: '9px' }}>{value}</text>)}
-      {!isEmpty && weekly.map(([week, spend], index) => {
-        const x = chartLeft + index * slot + 4;
-        const height = (Number(spend) / maxSpend) * (chartBottom - chartTop);
-        return <g key={week}><rect x={x} y={chartBottom - height} width="32" height={height} rx="4" fill="#0ea5e9" opacity="0.85" /></g>;
-      })}
-      {!isEmpty && <polyline points={orderPoints} fill="none" stroke="#10b981" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
-      {!isEmpty && orderPoints.split(' ').map((point) => { const [cx, cy] = point.split(','); return <circle key={point} cx={cx} cy={cy} r="4" fill="#10b981" stroke="white" strokeWidth="2" />; })}
-      {!isEmpty && <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />}
-      {weekly.map(([week], index) => {
-        const x = chartLeft + 20 + index * slot;
-        return <g key={`tick-${week}`}>{!isEmpty && <line x1={x} x2={x} y1={chartBottom} y2={chartBottom + 6} stroke="#cbd5e1" strokeWidth="1.2" className="dark:stroke-slate-700" />}<text x={x} y="250" textAnchor="middle" className="fill-slate-500" style={{ fontSize: '10px' }}>{week}</text></g>;
-      })}
-    </svg>
+    <div className="relative h-full w-full select-none" aria-label="Ad spend compared to ad driven orders" role="img">
+      <svg className="h-full w-full overflow-visible" viewBox="0 0 680 300" preserveAspectRatio="xMidYMid meet">
+        {[42, 88, 134, 180, 226].map((y) => <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#e2e8f0" className="dark:stroke-slate-800" strokeDasharray="3 3" />)}
+        {weekly.map((_, index) => {
+          const x = chartLeft + 20 + index * slot;
+          return <line key={`grid-${index}`} x1={x} x2={x} y1={chartTop} y2={chartBottom} stroke="#f8fafc" className="dark:stroke-slate-900" />;
+        })}
+        {spendLabels.map((value, index) => <text key={`${value}-${index}`} x="50" y={46 + index * 46} textAnchor="end" className="fill-slate-500 font-mono" style={{ fontSize: '9px' }}>{value.toLocaleString()}</text>)}
+        {orderLabels.map((value, index) => <text key={`${value}-${index}`} x="668" y={46 + index * 46} textAnchor="start" className="fill-emerald-600 font-bold font-mono" style={{ fontSize: '9px' }}>{value}</text>)}
+        {!isEmpty && weekly.map(([week, spend], index) => {
+          const x = chartLeft + index * slot + 4;
+          const height = (Number(spend) / maxSpend) * (chartBottom - chartTop);
+          const isHovered = hoveredIndex === index;
+          return (
+            <g key={week}>
+              <rect
+                x={x}
+                y={chartBottom - height}
+                width="32"
+                height={height}
+                rx="4"
+                fill="#0ea5e9"
+                opacity={isHovered ? 1 : 0.8}
+                className="transition-all duration-150"
+              />
+              <rect
+                x={x - 6}
+                y={chartTop}
+                width="44"
+                height={chartBottom - chartTop + 30}
+                fill="transparent"
+                className="cursor-pointer"
+                onMouseEnter={() => setHoveredIndex(index)}
+                onMouseLeave={() => setHoveredIndex(null)}
+              />
+            </g>
+          );
+        })}
+        {!isEmpty && <polyline points={orderPoints} fill="none" stroke="#10b981" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
+        {!isEmpty && orderPoints.split(' ').map((point, index) => {
+          const [cx, cy] = point.split(',').map(Number);
+          const isHovered = hoveredIndex === index;
+          return (
+            <circle
+              key={point}
+              cx={cx}
+              cy={cy}
+              r={isHovered ? 6 : 4}
+              fill="#10b981"
+              stroke="white"
+              strokeWidth={isHovered ? 3 : 2}
+            />
+          );
+        })}
+        {!isEmpty && <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />}
+        {weekly.map(([week], index) => {
+          const x = chartLeft + 20 + index * slot;
+          const isHovered = hoveredIndex === index;
+          return (
+            <g key={`tick-${week}`}>
+              {!isEmpty && <line x1={x} x2={x} y1={chartBottom} y2={chartBottom + 6} stroke="#cbd5e1" strokeWidth="1.2" className="dark:stroke-slate-700" />}
+              <text x={x} y="250" textAnchor="middle" className={`text-[10px] font-semibold ${isHovered ? 'fill-slate-900 dark:fill-white font-bold' : 'fill-slate-500'}`}>{week}</text>
+            </g>
+          );
+        })}
+      </svg>
+      {hovered && (
+        <div
+          className="pointer-events-none absolute z-20 transition-all duration-75"
+          style={{
+            left: `${((chartLeft + 20 + hoveredIndex! * slot) / 680) * 100}%`,
+            top: '30%',
+            transform: 'translate(-50%, -100%)',
+          }}
+        >
+          <div className="whitespace-nowrap rounded-lg border border-slate-700/50 bg-slate-900/95 px-3.5 py-2.5 text-xs text-white shadow-xl backdrop-blur-sm">
+            <div className="font-bold border-b border-slate-700/60 pb-1 mb-1.5 text-slate-300">Period: {hovered[0]}</div>
+            <div className="space-y-1">
+              <div className="flex justify-between gap-4 text-sky-400"><span>● Ad Spend:</span> <b>{amount(Number(hovered[1]))} MMK</b></div>
+              <div className="flex justify-between gap-4 text-emerald-400"><span>● Ad Orders:</span> <b>{hovered[2]} orders</b></div>
+              <div className="flex justify-between gap-4 text-[10px] text-slate-400 border-t border-slate-700/40 pt-1">
+                <span>Cost / Order:</span>
+                <b>{Number(hovered[2]) > 0 ? `${amount(Math.round(Number(hovered[1]) / Number(hovered[2])))} MMK` : '—'}</b>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -923,6 +995,11 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
     return matchesStage && matchesSearch;
   });
 
+  const [dealPage, setDealPage] = useState(1);
+  const dealPageSize = 10;
+  const totalDealPages = Math.max(1, Math.ceil(filteredDeals.length / dealPageSize));
+  const pagedDeals = filteredDeals.slice((dealPage - 1) * dealPageSize, dealPage * dealPageSize);
+
   const stageColors = [
     ['border-sky-500', 'bg-sky-50 dark:bg-sky-950/20'],
     ['border-violet-500', 'bg-violet-50 dark:bg-violet-950/20'],
@@ -949,16 +1026,40 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
 
       <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
         <div className="flex flex-col gap-3 border-b-2 border-slate-200 bg-slate-50/60 p-6 dark:border-slate-800 dark:bg-slate-950/40 md:flex-row md:items-center md:justify-between">
-          <div><h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Deal Pipeline</h2><p className="mt-1 text-xs text-muted-foreground">Deals grouped by their current sales stage.</p></div>
+          <div><h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Deal Pipeline Flow</h2><p className="mt-1 text-xs text-muted-foreground">Deals grouped by their current sales stage with visual progress bars.</p></div>
           <span className="text-xs font-bold text-muted-foreground border-2 border-border bg-muted px-3 py-1 rounded-full">{amount(data?.kpis.pipelineDeals ?? 0)} Active Deals</span>
         </div>
         <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-4">
-          {stages.map((stage) => (
-            <section key={stage.label} className={`rounded-xl border-t-4 ${stage.color} ${stage.bg} p-4`}>
-              <div className="mb-4"><h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600 dark:text-slate-300">{stage.label}</h3><p className="mt-1 text-[11px] font-semibold text-slate-500">{stage.count} deals in this stage</p></div>
-              <div className="space-y-3">{stage.deals.map((deal) => <div key={deal.id} className="w-full rounded-lg border border-slate-200 bg-card p-3 text-left text-xs font-bold text-slate-700 shadow-sm dark:border-slate-800 dark:text-slate-200"><span className="block truncate">{deal.customer}</span><span className="mt-1 block text-[10px] font-semibold text-slate-500">{amount(deal.amount)} MMK</span></div>)}</div>
-            </section>
-          ))}
+          {stages.map((stage) => {
+            const totalDealsCount = data?.kpis.orders || stages.reduce((s, st) => s + st.count, 0) || 1;
+            const pct = Math.min(100, Math.round((stage.count / totalDealsCount) * 100));
+            return (
+              <section key={stage.label} className={`rounded-xl border-t-4 ${stage.color} ${stage.bg} p-4 flex flex-col justify-between`}>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-700 dark:text-slate-200">{stage.label}</h3>
+                    <span className="text-xs font-black text-slate-900 dark:text-slate-100 font-mono">{stage.count}</span>
+                  </div>
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                    <div className="h-full rounded-full bg-sky-500 transition-all duration-300" style={{ width: `${pct}%` }} />
+                  </div>
+                  <p className="mt-1 text-[10px] font-semibold text-slate-500">{pct}% of pipeline volume</p>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {stage.deals.length > 0 ? (
+                    stage.deals.map((deal) => (
+                      <div key={deal.id} className="w-full rounded-lg border border-slate-200 bg-card p-2.5 text-left text-xs font-bold text-slate-700 shadow-sm dark:border-slate-800 dark:text-slate-200">
+                        <span className="block truncate">{deal.customer}</span>
+                        <span className="mt-0.5 block text-[10px] font-semibold text-slate-500">{amount(deal.amount)} MMK</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-800 p-2 text-center text-[10px] text-slate-400">No active deals</div>
+                  )}
+                </div>
+              </section>
+            );
+          })}
         </div>
       </section>
 
@@ -974,8 +1075,8 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
               <p className="mt-1 text-sm text-muted-foreground">Manage and track deals, quoted prices, stages, and order fulfillment.</p>
             </div>
             <div className="flex items-center gap-2">
-              <Input placeholder="Search deals..." value={dealSearch} onChange={(e) => setDealSearch(e.target.value)} className="h-9 w-48 bg-card text-xs font-semibold" />
-              <Select value={stageFilter} onValueChange={(val) => setStageFilter(val ?? 'ALL')}>
+              <Input placeholder="Search deals..." value={dealSearch} onChange={(e) => { setDealSearch(e.target.value); setDealPage(1); }} className="h-9 w-48 bg-card text-xs font-semibold" />
+              <Select value={stageFilter} onValueChange={(val) => { setStageFilter(val ?? 'ALL'); setDealPage(1); }}>
                 <SelectTrigger className="h-9 w-36 text-xs font-bold bg-card">{stageFilter === 'ALL' ? 'All Stages' : stageFilter}</SelectTrigger>
                 <SelectContent>
                   <SelectItem value="ALL">All Stages</SelectItem>
@@ -998,7 +1099,6 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
             <thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40">
               <tr>
                 <th className="px-5 py-4">Date</th>
-                <th className="px-5 py-4">Deal Title</th>
                 <th className="px-5 py-4">Customer</th>
                 <th className="px-5 py-4 text-right">Quoted Amount</th>
                 <th className="px-5 py-4 text-center">Stage</th>
@@ -1009,14 +1109,13 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
             </thead>
             <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
               {isLoadingDeals ? (
-                <tr><td colSpan={8} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading deals...</td></tr>
-              ) : filteredDeals.length > 0 ? (
-                filteredDeals.map((deal) => (
+                <tr><td colSpan={7} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading deals...</td></tr>
+              ) : pagedDeals.length > 0 ? (
+                pagedDeals.map((deal) => (
                   <tr key={deal.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
                     <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">
                       {new Date(deal.createdAt).toLocaleDateString()}
                     </td>
-                    <td className="px-5 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{deal.title}</td>
                     <td className="px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{deal.customer?.name || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-4 text-right text-xs font-black text-sky-600 dark:text-sky-400">
                       {deal.quotedAmount ? `${amount(deal.quotedAmount)} MMK` : '—'}
@@ -1041,11 +1140,28 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
                   </tr>
                 ))
               ) : (
-                <tr><td colSpan={8} className="px-6 py-10 text-center text-sm text-slate-500">No deals found for this period.</td></tr>
+                <tr><td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">No deals found for this period.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+        {totalDealPages > 1 && (
+          <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-800 bg-card/20 px-6 py-4">
+            <div className="text-xs text-muted-foreground font-mono">
+              Showing Page <span className="text-foreground font-bold">{dealPage}</span> of <span className="text-foreground font-bold">{totalDealPages}</span> ({filteredDeals.length} total)
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={dealPage <= 1} onClick={() => setDealPage((p) => Math.max(1, p - 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Prev
+              </Button>
+              <Button variant="outline" size="sm" disabled={dealPage >= totalDealPages} onClick={() => setDealPage((p) => Math.min(totalDealPages, p + 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+                Next
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Deal Add/Edit Dialog */}
@@ -1265,6 +1381,11 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
   const weekly = data?.chart.length ? data.chart.map((item) => [item.label, item.spend, item.orders] as const) : [['W1', 0, 0], ['W2', 0, 0], ['W3', 0, 0], ['W4', 0, 0]] as const;
   const topProducts = data?.topProducts ?? [];
 
+  const [metricPage, setMetricPage] = useState(1);
+  const metricPageSize = 10;
+  const totalMetricPages = Math.max(1, Math.ceil(metrics.length / metricPageSize));
+  const pagedMetrics = metrics.slice((metricPage - 1) * metricPageSize, metricPage * metricPageSize);
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1291,7 +1412,7 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
           <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Top Performing Products (Ad-driven)</h2></div>
           <div className="divide-y-2 divide-slate-100 px-6 dark:divide-slate-900">
             {topProducts.length ? topProducts.map((product, index) => (
-              <div key={product.name} className="flex items-center justify-between gap-4 py-5">
+              <div key={`${product.name}-${index}`} className="flex items-center justify-between gap-4 py-5">
                 <div className="min-w-0"><p className="truncate font-bold text-slate-900 dark:text-slate-100">{index + 1}. {product.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">Ad-attributed product sales</p></div>
                 <span className="whitespace-nowrap rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{product.orders} orders</span>
               </div>
@@ -1322,7 +1443,6 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
               <tr>
                 <th className="px-5 py-4">Date</th>
                 <th className="px-5 py-4">Channel</th>
-                <th className="px-5 py-4">Campaign Name</th>
                 <th className="px-5 py-4 text-right">Spend (MMK)</th>
                 <th className="px-5 py-4 text-center">Reach / Impr</th>
                 <th className="px-5 py-4 text-center">Leads</th>
@@ -1332,15 +1452,14 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
             </thead>
             <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
               {isLoadingMetrics ? (
-                <tr><td colSpan={8} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading marketing records...</td></tr>
-              ) : metrics.length > 0 ? (
-                metrics.map((metric) => (
+                <tr><td colSpan={7} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading marketing records...</td></tr>
+              ) : pagedMetrics.length > 0 ? (
+                pagedMetrics.map((metric) => (
                   <tr key={metric.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
                     <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">
                       {metric.metricDate ? metric.metricDate.slice(0, 10) : '—'}
                     </td>
                     <td className="px-5 py-4 font-bold text-xs text-slate-900 dark:text-slate-100">{metric.channel}</td>
-                    <td className="px-5 py-4 text-xs text-slate-600 dark:text-slate-400">{metric.campaignName || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-4 text-right text-xs font-black text-rose-600 dark:text-rose-400">
                       {amount(metric.spend)} MMK
                     </td>
@@ -1356,11 +1475,28 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
                   </tr>
                 ))
               ) : (
-                <tr><td colSpan={8} className="px-6 py-10 text-center text-sm text-slate-500">No marketing records found for this period.</td></tr>
+                <tr><td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">No marketing records found for this period.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+        {totalMetricPages > 1 && (
+          <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-800 bg-card/20 px-6 py-4">
+            <div className="text-xs text-muted-foreground font-mono">
+              Showing Page <span className="text-foreground font-bold">{metricPage}</span> of <span className="text-foreground font-bold">{totalMetricPages}</span> ({metrics.length} total)
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={metricPage <= 1} onClick={() => setMetricPage((p) => Math.max(1, p - 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Prev
+              </Button>
+              <Button variant="outline" size="sm" disabled={metricPage >= totalMetricPages} onClick={() => setMetricPage((p) => Math.min(totalMetricPages, p + 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+                Next
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Metric Add/Edit Dialog */}
@@ -1463,8 +1599,6 @@ function InventoryWorkspace({ data, recommendations, isRecommendationsLoading }:
   });
 
   const products = data?.products ?? [];
-  const outOfStock = products.filter((product) => product.status === 'Out of Stock');
-  const wellStocked = products.find((product) => product.status === 'In Stock');
   const statusClass = (status: string) => status === 'In Stock' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : status === 'Low Stock' ? 'border-amber-200 bg-amber-50 text-amber-700' : status === 'Out of Stock' ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-600';
 
   const openAddProduct = () => {
@@ -1505,15 +1639,15 @@ function InventoryWorkspace({ data, recommendations, isRecommendationsLoading }:
     }
     setIsSaving(true);
     try {
+      const generatedSku = productForm.sku.trim() || `SKU-${Date.now().toString().slice(-6)}`;
       const payload = {
         name: productForm.name.trim(),
-        sku: productForm.sku.trim() || null,
+        sku: generatedSku,
         category: productForm.category.trim() || null,
         sellingPrice: productForm.sellingPrice ? Number(productForm.sellingPrice) : null,
         unitCost: productForm.unitCost ? Number(productForm.unitCost) : null,
         stockQty: Number(productForm.stockQty) || 0,
         lowStockThreshold: Number(productForm.lowStockThreshold) || 5,
-        description: productForm.description.trim() || null,
       };
 
       const res = await fetch('/api/products', {
@@ -1552,6 +1686,11 @@ function InventoryWorkspace({ data, recommendations, isRecommendationsLoading }:
     }
   };
 
+  const [prodPage, setProdPage] = useState(1);
+  const prodPageSize = 10;
+  const totalProdPages = Math.max(1, Math.ceil(products.length / prodPageSize));
+  const pagedProducts = products.slice((prodPage - 1) * prodPageSize, prodPage * prodPageSize);
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -1562,35 +1701,6 @@ function InventoryWorkspace({ data, recommendations, isRecommendationsLoading }:
       </div>
 
       <SmartSuggestions recommendations={recommendations} isLoading={isRecommendationsLoading} areaFilter="inventory" />
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <section className="bg-card border-2 border-red-300 border-l-8 border-l-red-500 rounded-xl shadow-sm flex flex-col justify-between">
-          <div className="p-5 flex flex-col h-full justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-3">
-                <AlertTriangle className="h-5 w-5 text-red-600" />
-                <h3 className="font-bold text-slate-900 dark:text-slate-100">{outOfStock.length > 0 ? `${outOfStock.length} product${outOfStock.length === 1 ? ' is' : 's are'} out of stock` : 'No stockouts right now'}</h3>
-              </div>
-              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-                {outOfStock.length > 0 ? `${outOfStock.slice(0, 3).map((product) => product.name).join(', ')} cannot be sold until replenished.` : 'Every product has stock available for the next sale.'}
-              </p>
-            </div>
-          </div>
-        </section>
-        <section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between">
-          <div className="p-5 flex flex-col h-full justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-3">
-                <TrendingUp className="h-5 w-5 text-emerald-600" />
-                <h3 className="font-bold text-slate-900 dark:text-slate-100">{wellStocked ? `${wellStocked.name} is well stocked` : 'Stock levels look stable'}</h3>
-              </div>
-              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-                {wellStocked ? `${wellStocked.stockLevel}. It can support the next promotion cycle.` : 'Low-stock alerts will appear when a product crosses its threshold.'}
-              </p>
-            </div>
-          </div>
-        </section>
-      </div>
 
       <section className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1612,32 +1722,52 @@ function InventoryWorkspace({ data, recommendations, isRecommendationsLoading }:
               </tr>
             </thead>
             <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
-              {products.map((product) => (
-                <tr key={product.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
-                  <td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{product.name}</td>
-                  <td className="px-6 py-4 text-xs font-bold text-slate-500">{product.productCode || '—'}</td>
-                  <td className="px-6 py-4 text-xs font-semibold text-slate-500">{product.stockLevel}</td>
-                  <td className="px-6 py-4">
-                    <span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${statusClass(product.status)}`}>
-                      {product.status.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center justify-center gap-2">
-                      <Button aria-label={`Edit ${product.name}`} variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700" onClick={() => openEditProduct(product as unknown as ProductRecord)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button aria-label={`Delete ${product.name}`} variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => setDeleteProduct(product as unknown as ProductRecord)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {products.length === 0 && <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No products in catalog yet.</td></tr>}
+              {pagedProducts.length > 0 ? (
+                pagedProducts.map((product) => (
+                  <tr key={product.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
+                    <td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{product.name}</td>
+                    <td className="px-6 py-4 text-xs font-bold text-slate-500">{product.productCode || '—'}</td>
+                    <td className="px-6 py-4 text-xs font-semibold text-slate-500">{product.stockLevel}</td>
+                    <td className="px-6 py-4">
+                      <span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${statusClass(product.status)}`}>
+                        {product.status.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center justify-center gap-2">
+                        <Button aria-label={`Edit ${product.name}`} variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700" onClick={() => openEditProduct(product as unknown as ProductRecord)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button aria-label={`Delete ${product.name}`} variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => setDeleteProduct(product as unknown as ProductRecord)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No products in catalog yet.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
+        {totalProdPages > 1 && (
+          <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-800 bg-card/20 px-6 py-4">
+            <div className="text-xs text-muted-foreground font-mono">
+              Showing Page <span className="text-foreground font-bold">{prodPage}</span> of <span className="text-foreground font-bold">{totalProdPages}</span> ({products.length} total)
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={prodPage <= 1} onClick={() => setProdPage((p) => Math.max(1, p - 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+                <ChevronLeft className="w-4 h-4 mr-1" />
+                Prev
+              </Button>
+              <Button variant="outline" size="sm" disabled={prodPage >= totalProdPages} onClick={() => setProdPage((p) => Math.min(totalProdPages, p + 1))} className="bg-card border-border text-foreground hover:bg-muted cursor-pointer">
+                Next
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Product Add/Edit Dialog */}

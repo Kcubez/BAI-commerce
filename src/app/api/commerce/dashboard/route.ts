@@ -148,8 +148,8 @@ export async function GET(req: NextRequest) {
   const productMap = new Map<string, { name: string; sku: string | null; quantity: number; income: number }>();
   wonDeals.forEach((deal) => {
     deal.items.forEach((item) => {
-      const key = item.sku || item.productName;
-      const current = productMap.get(key) ?? { name: item.productName, sku: item.sku, quantity: 0, income: 0 };
+      const key = item.productName.trim().toLowerCase();
+      const current = productMap.get(key) ?? { name: item.productName.trim(), sku: item.sku, quantity: 0, income: 0 };
       current.quantity += item.quantity;
       current.income += item.quantity * item.unitPrice;
       productMap.set(key, current);

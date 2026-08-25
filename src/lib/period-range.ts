@@ -97,7 +97,29 @@ export function buildTrendBuckets(period: ResolvedPeriod): {
     return { start, labels: [label], bucketIndex: () => 0 };
   }
 
-  if (period.period === "year" || period.period === "overall" || period.period === "custom") {
+  if (period.period === "overall") {
+    // For overall, display 12 months ending at current year/month
+    const now = nowMyanmar();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth();
+    const labels: string[] = [];
+    const bucketStartYear = currentMonth < 11 ? currentYear - 1 : currentYear;
+    const bucketStartMonth = (currentMonth + 1) % 12;
+    for (let i = 0; i < 12; i++) {
+      const m = (bucketStartMonth + i) % 12;
+      labels.push(monthNames[m]);
+    }
+    return {
+      start,
+      labels,
+      bucketIndex: (date: Date) => {
+        const diffMonths = (date.getUTCFullYear() - bucketStartYear) * 12 + date.getUTCMonth() - bucketStartMonth;
+        return diffMonths >= 0 && diffMonths < 12 ? diffMonths : -1;
+      },
+    };
+  }
+
+  if (period.period === "year" || period.period === "custom") {
     // Monthly buckets; long custom ranges are capped at the first 24 months.
     const capped = monthlyLabels.slice(0, 24);
     return {
