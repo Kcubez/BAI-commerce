@@ -392,7 +392,7 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
   );
 }
 
-function FinanceWorkspace({ data }: { data?: CommerceWorkspaceData['finance'] }) {
+function FinanceWorkspace({ data, recommendations, isRecommendationsLoading }: { data?: CommerceWorkspaceData['finance']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean }) {
   const monthly: [string, number, number][] = data?.timeline.length ? data.timeline.map((item) => [item.label, item.revenue, item.expense]) : [['Feb', 0, 0], ['Mar', 0, 0], ['Apr', 0, 0], ['May', 0, 0], ['Jun', 0, 0], ['Jul', 0, 0]];
   const breakdown: [string, number, number, string][] = data?.expenseBreakdown.length ? data.expenseBreakdown.map((item, index) => [item.category, item.percent, item.value, ['#0ea5e9', '#94a3b8', '#f59e0b', '#64748b', '#8b5cf6'][index] ?? '#64748b']) : [];
   const [typeFilter, setTypeFilter] = useState('All');
@@ -400,20 +400,22 @@ function FinanceWorkspace({ data }: { data?: CommerceWorkspaceData['finance'] })
   const [showSuggestions, setShowSuggestions] = useState(false);
   const records = data?.records.map((record) => ({ ...record, amount: `${record.type === 'Income' ? '+' : '-'}${amount(record.amount)}` })) ?? [];
   const filteredRecords = records.filter((record) => (typeFilter === 'All' || record.type === typeFilter) && (categoryFilter === 'All' || record.category === categoryFilter));
-  const insights = data?.insights ?? [];
-  const hasFinanceData = (data?.kpis.revenue ?? 0) !== 0 || (data?.kpis.expense ?? 0) !== 0;
+  // Finance uses the same deterministic Burmese heuristic feed as the main
+  // dashboard, limited to recommendations actionable from this workspace.
+  const financeRecommendations = recommendations?.filter((recommendation) => recommendation.area === 'finance') ?? [];
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Revenue" value={amount(data?.kpis.revenue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Total Expense" value={amount(data?.kpis.expense ?? 0)} unit="MMK" icon={ReceiptText} accentClass="border-l-4 border-l-red-500" /><FinanceKpiCard label="Profit / Loss" value={amount(data?.kpis.profit ?? 0)} unit="MMK" icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /><FinanceKpiCard label="Profit Margin" value={`${(data?.kpis.profitMargin ?? 0).toFixed(1)}%`} icon={Percent} accentClass="border-l-4 border-l-emerald-500" /></div>
-      {hasFinanceData && <section className="rounded-xl border-2 border-sky-200 bg-sky-50/40 shadow-sm dark:border-sky-900 dark:bg-sky-950/20">
+      <section className="rounded-xl border-2 border-sky-200 bg-sky-50/40 shadow-sm dark:border-sky-900 dark:bg-sky-950/20">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div><h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Smart Finance Suggestions</h2><p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Review recommendations based on the selected period.</p></div>
           <Button variant="outline" size="sm" className="h-9 w-fit cursor-pointer" onClick={() => setShowSuggestions((open) => !open)}>{showSuggestions ? 'Hide suggestions' : 'View suggestions'}{showSuggestions ? <ChevronUp className="ml-1.5 h-4 w-4" /> : <ChevronDown className="ml-1.5 h-4 w-4" />}</Button>
         </div>
         {showSuggestions && <div className="grid grid-cols-1 gap-4 border-t border-sky-100 p-5 pt-4 md:grid-cols-2 dark:border-sky-900">
-          {(insights.length ? insights : [{ tone: 'amber' as const, title: 'Review finance activity', text: 'Check the timeline and expense categories for this period.', action: 'View records' }]).map((insight) => <section key={insight.title} className={`flex flex-col justify-between rounded-xl border-2 border-l-8 bg-card p-5 shadow-sm ${insight.tone === 'emerald' ? 'border-emerald-300 border-l-emerald-500' : insight.tone === 'red' ? 'border-red-300 border-l-red-500' : 'border-amber-300 border-l-amber-500'}`}><div><div className="mb-2 flex items-center gap-3">{insight.tone === 'emerald' ? <TrendingUp className="h-5 w-5 text-emerald-600" /> : <AlertTriangle className={`h-5 w-5 ${insight.tone === 'red' ? 'text-red-600' : 'text-amber-600'}`} />}<h3 className="font-bold text-slate-900 dark:text-slate-100">{insight.title}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{insight.text}</p></div><Button variant={insight.tone === 'emerald' ? 'outline' : 'default'} size="sm" className={`mt-4 h-9 w-fit rounded-lg px-4 text-xs font-bold ${insight.tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : insight.tone === 'red' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-amber-600 text-white hover:bg-amber-700'}`} onClick={() => document.getElementById('finance-records-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{insight.action}</Button></section>)}
+          {isRecommendationsLoading ? <p className="text-sm text-muted-foreground">အကြံပြုချက်များကို တွက်ချက်နေပါသည်…</p> : financeRecommendations.map((recommendation) => { const isAlert = recommendation.severity !== 'info'; return <section key={recommendation.title} className={`flex flex-col justify-between rounded-xl border-2 border-l-8 bg-card p-5 shadow-sm ${isAlert ? 'border-amber-300 border-l-amber-500' : 'border-emerald-300 border-l-emerald-500'}`}><div><div className="mb-2 flex items-center gap-3">{isAlert ? <AlertTriangle className="h-5 w-5 text-amber-600" /> : <TrendingUp className="h-5 w-5 text-emerald-600" />}<h3 className="font-bold text-slate-900 dark:text-slate-100">{recommendation.title}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{recommendation.insight}</p></div><Button variant={isAlert ? 'default' : 'outline'} size="sm" className={`mt-4 h-9 w-fit rounded-lg px-4 text-xs font-bold ${isAlert ? 'bg-amber-600 text-white hover:bg-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`} onClick={() => document.getElementById('finance-records-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{recommendation.action}</Button></section>; })}
+          {!isRecommendationsLoading && financeRecommendations.length === 0 && <p className="text-sm text-muted-foreground">ဒီကာလအတွက် Finance အကြံပြုချက် မရှိသေးပါ။</p>}
         </div>}
-      </section>}
+      </section>
       <div className="space-y-6">
         <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Revenue vs Expense Timeline</h2></div><div className="px-4 pb-5 sm:px-6">{monthly.every(([, revenue, expense]) => revenue === 0 && expense === 0) ? <p className="py-12 text-center text-sm text-slate-500">No timeline data yet.</p> : <FinanceTimelineChart monthly={monthly} />}</div></section>
         <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Expense Breakdown</h2></div><div className="p-5 sm:p-6">{breakdown.length === 0 ? <p className="py-12 text-center text-sm text-slate-500">No expense breakdown yet.</p> : <ExpenseBreakdownChart items={breakdown} />}</div></section>
@@ -542,7 +544,7 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
   };
   const { data: dashboard } = useCommerceDashboard(dashboardParams, overview);
   const { data: workspaceData } = useCommerceWorkspaces(dashboardParams, !overview);
-  const { data: recommendationsData, isLoading: recsLoading } = useCommerceRecommendations(dashboardParams, overview);
+  const { data: recommendationsData, isLoading: recsLoading } = useCommerceRecommendations(dashboardParams, overview || workspace === 'finance');
   const saveTargets = useSaveCommerceTargets();
   const content = {
     overview: ['Business Overview', 'Daily intelligence feed and target pacing.'],
@@ -721,7 +723,7 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
         </div>
       </header>
 
-      {workspace === 'finance' ? <FinanceWorkspace data={workspaceData?.finance} /> : workspace === 'sales' ? <SalesWorkspace data={workspaceData?.sales} /> : workspace === 'marketing' ? <MarketingWorkspace data={workspaceData?.marketing} /> : workspace === 'customers' ? <CustomerServiceWorkspace data={workspaceData?.customers} /> : workspace === 'inventory' ? <InventoryWorkspace data={workspaceData?.inventory} /> : <>
+      {workspace === 'finance' ? <FinanceWorkspace data={workspaceData?.finance} recommendations={recommendationsData?.recommendations} isRecommendationsLoading={recsLoading} /> : workspace === 'sales' ? <SalesWorkspace data={workspaceData?.sales} /> : workspace === 'marketing' ? <MarketingWorkspace data={workspaceData?.marketing} /> : workspace === 'customers' ? <CustomerServiceWorkspace data={workspaceData?.customers} /> : workspace === 'inventory' ? <InventoryWorkspace data={workspaceData?.inventory} /> : <>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {cards.map(([title, value, target, expected, status, tone, icon, progressPercent]) => <ProgressCard key={title} title={title} value={value} target={target} expected={expected} status={status} tone={tone} icon={icon} progressPercent={progressPercent} />)}
       </div>
