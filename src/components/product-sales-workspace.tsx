@@ -314,35 +314,44 @@ function FinanceKpiCard({ label, value, icon: Icon, accentClass, unit }: { label
   );
 }
 
-function FinanceTimelineChart({ monthly, maxTimelineValue }: { monthly: [string, number, number][]; maxTimelineValue: number }) {
-  const isEmpty = monthly.every(([, revenue, expense]) => revenue === 0 && expense === 0);
-  const chartLeft = 56;
-  const chartRight = 658;
-  const chartTop = 40;
-  const chartBottom = 250;
-  const slot = monthly.length > 1 ? (chartRight - chartLeft) / (monthly.length - 1) : 0;
-  const toPoint = (value: number, index: number) => `${chartLeft + index * slot},${chartBottom - (value / maxTimelineValue) * (chartBottom - chartTop)}`;
-  const revenuePoints = monthly.map(([, revenue], index) => toPoint(revenue, index)).join(' ');
-  const expensePoints = monthly.map(([, , expense], index) => toPoint(expense, index)).join(' ');
-  const yLabels = isEmpty ? [0, 1, 2, 3, 4, 5] : Array.from({ length: 6 }, (_, index) => Math.round((maxTimelineValue / 5) * index));
+function FinanceTimelineChart({ monthly }: { monthly: [string, number, number][] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const maxValue = Math.max(...monthly.flatMap(([, revenue, expense]) => [revenue, expense]), 1);
+  const axisMax = Math.ceil(Math.max(1, maxValue / 1_000_000) * 10) / 10;
+  const width = 1120, height = 330, left = 72, right = 32, top = 24, bottom = 48;
+  const plotWidth = width - left - right, plotHeight = height - top - bottom;
+  const pointFor = (value: number, index: number) => {
+    const x = left + (monthly.length <= 1 ? 0 : (index / (monthly.length - 1)) * plotWidth);
+    return [x, top + plotHeight - ((value / 1_000_000) / axisMax) * plotHeight] as const;
+  };
+  const points = monthly.map(([label, revenue, expense], index) => {
+    const [x, revenueY] = pointFor(revenue, index); const [, expenseY] = pointFor(expense, index);
+    return { label, revenue, expense, x, revenueY, expenseY };
+  });
+  const slotWidth = monthly.length <= 1 ? plotWidth : plotWidth / (monthly.length - 1);
+  const labelStep = monthly.length <= 8 ? 1 : Math.ceil((monthly.length - 1) / 6);
+  const hovered = hoveredIndex === null ? null : points[hoveredIndex];
+  return <div className="space-y-4"><div className="flex items-center justify-center gap-6 text-sm font-semibold text-slate-600 dark:text-slate-300"><span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm border-4 border-sky-500" />Revenue</span><span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm border-4 border-red-500" />Expense</span></div><div className="relative h-[21rem] w-full select-none sm:h-[23rem]"><svg className="h-full w-full overflow-visible" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Revenue and expense timeline">{Array.from({ length: 6 }, (_, index) => { const value = axisMax / 5 * index; const y = top + plotHeight - value / axisMax * plotHeight; return <g key={index}><line x1={left} x2={width - right} y1={y} y2={y} stroke="#e2e8f0" /><text x={left - 12} y={y + 4} textAnchor="end" className="fill-slate-500 text-[12px] font-semibold">{amount(Math.round(value * 1_000_000))}</text></g>; })}<line x1={left} x2={left} y1={top} y2={height - bottom} stroke="#cbd5e1" strokeWidth="1.5" /><line x1={left} x2={width - right} y1={height - bottom} y2={height - bottom} stroke="#cbd5e1" strokeWidth="1.5" /><polyline points={points.map((point) => `${point.x},${point.revenueY}`).join(' ')} fill="none" stroke="#0ea5e9" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" /><polyline points={points.map((point) => `${point.x},${point.expenseY}`).join(' ')} fill="none" stroke="#ef4444" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />{hovered && <line x1={hovered.x} x2={hovered.x} y1={top} y2={height - bottom} stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4 4" />}{points.map((point, index) => <g key={point.label}><circle cx={point.x} cy={point.revenueY} r={hoveredIndex === index ? 6 : 4} fill="#0ea5e9" stroke="white" strokeWidth={hoveredIndex === index ? 3 : 2} /><circle cx={point.x} cy={point.expenseY} r={hoveredIndex === index ? 6 : 4} fill="#ef4444" stroke="white" strokeWidth={hoveredIndex === index ? 3 : 2} />{(index === 0 || index === points.length - 1 || index % labelStep === 0) && <text x={point.x} y={height - 14} textAnchor="middle" className={`text-[13px] font-semibold ${hoveredIndex === index ? 'fill-slate-900 dark:fill-white font-bold' : 'fill-slate-500'}`}>{point.label}</text>}<rect x={point.x - slotWidth / 2} y={top} width={slotWidth} height={plotHeight} fill="transparent" className="cursor-pointer" onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} /></g>)}</svg>{hovered && <div className="pointer-events-none absolute z-20 transition-all duration-75" style={{ left: `${hovered.x / width * 100}%`, top: `${Math.min(hovered.revenueY, hovered.expenseY) / height * 100}%`, transform: `translate(${hovered.x / width > .8 ? '-95%' : hovered.x / width < .2 ? '-5%' : '-50%'}, ${Math.min(hovered.revenueY, hovered.expenseY) / height < .28 ? '12px' : '-115%'})` }}><div className="whitespace-nowrap rounded-lg border border-slate-700/50 bg-slate-800/95 px-3.5 py-2.5 text-[11px] text-white shadow-xl backdrop-blur-sm"><div className="mb-1.5 border-b border-slate-700/60 pb-1 font-bold text-slate-200">{hovered.label}</div><div className="space-y-1"><div className="flex justify-between gap-3"><span className="text-slate-300">● Revenue:</span><b className="text-sky-400">{amount(hovered.revenue)} MMK</b></div><div className="flex justify-between gap-3"><span className="text-slate-300">● Expense:</span><b className="text-red-400">{amount(hovered.expense)} MMK</b></div><div className="flex justify-between gap-3 border-t border-slate-700/40 pt-1 text-[10px]"><span className="text-slate-400">Net:</span><b className={hovered.revenue - hovered.expense >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{hovered.revenue - hovered.expense >= 0 ? '+' : ''}{amount(hovered.revenue - hovered.expense)} MMK</b></div></div></div></div>}</div></div>;
+}
 
-  return (
-    <svg className="h-full w-full overflow-visible" viewBox="0 0 680 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Revenue and expense timeline">
-      {[40, 82, 124, 166, 208, 250].map((y) => <line key={y} x1={chartLeft} x2={chartRight} y1={y} y2={y} stroke="#e2e8f0" />)}
-      {monthly.map((_, index) => {
-        const x = chartLeft + index * slot;
-        return <line key={`grid-${index}`} x1={x} x2={x} y1={chartTop} y2={chartBottom} stroke="#f8fafc" />;
-      })}
-      {yLabels.map((value, index) => <text key={`${value}-${index}`} x="44" y={254 - index * 42} textAnchor="end" className="fill-slate-500" style={{ fontSize: '10px' }}>{value.toLocaleString()}</text>)}
-      {!isEmpty && <polyline points={revenuePoints} fill="none" stroke="#0ea5e9" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
-      {!isEmpty && <polyline points={expensePoints} fill="none" stroke="#ef4444" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
-      {!isEmpty && <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" />}
-      {monthly.map(([monthLabel], index) => {
-        const x = chartLeft + index * slot;
-        return <g key={monthLabel}>{!isEmpty && <line x1={x} x2={x} y1={chartBottom} y2={chartBottom + 6} stroke="#cbd5e1" strokeWidth="1.2" />}<text x={x} y="274" textAnchor="middle" className="fill-slate-500" style={{ fontSize: '11px' }}>{monthLabel}</text></g>;
-      })}
-    </svg>
-  );
+function ExpenseBreakdownChart({ items }: { items: [string, number, number, string][] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const total = items.reduce((sum, [, , amount]) => sum + amount, 0);
+  const cx = 120, cy = 120, outer = 108, inner = 68;
+  const slices = items.map(([label, percent, value, color], index) => {
+    const start = -Math.PI / 2 + (total ? items.slice(0, index).reduce((sum, [, , previousValue]) => sum + previousValue / total, 0) * Math.PI * 2 : 0);
+    const end = start + (total ? value / total : 0) * Math.PI * 2;
+    const large = end - start > Math.PI ? 1 : 0;
+    const x1 = cx + outer * Math.cos(start), y1 = cy + outer * Math.sin(start);
+    const x2 = cx + outer * Math.cos(end), y2 = cy + outer * Math.sin(end);
+    const x3 = cx + inner * Math.cos(end), y3 = cy + inner * Math.sin(end);
+    const x4 = cx + inner * Math.cos(start), y4 = cy + inner * Math.sin(start);
+    const path = `M ${x1} ${y1} A ${outer} ${outer} 0 ${large} 1 ${x2} ${y2} L ${x3} ${y3} A ${inner} ${inner} 0 ${large} 0 ${x4} ${y4} Z`;
+    const mid = (start + end) / 2;
+    return { label, percent, value, color, index, path, tooltipX: cx + 88 * Math.cos(mid), tooltipY: cy + 88 * Math.sin(mid) };
+  });
+  const active = hoveredIndex === null ? null : slices[hoveredIndex];
+  return <div className="grid min-h-72 grid-cols-1 items-center gap-8 md:grid-cols-[minmax(15rem,0.8fr)_minmax(0,1.2fr)]"><div className="relative flex justify-center select-none md:justify-end"><div className="relative h-60 w-60"><svg viewBox="0 0 240 240" className="h-full w-full overflow-visible" role="img" aria-label="Expense breakdown donut chart">{slices.map((slice) => <path key={slice.label} d={slice.path} fill={slice.color} className="cursor-pointer transition-all duration-200" opacity={hoveredIndex !== null && hoveredIndex !== slice.index ? .55 : 1} stroke={hoveredIndex === slice.index ? 'white' : 'transparent'} strokeWidth={hoveredIndex === slice.index ? 2 : 0} onMouseEnter={() => setHoveredIndex(slice.index)} onMouseLeave={() => setHoveredIndex(null)} />)}</svg><div className="pointer-events-none absolute inset-[3.75rem] flex flex-col items-center justify-center rounded-full bg-card px-2 text-center shadow-inner"><span className="max-w-[100px] truncate text-[10px] font-bold uppercase tracking-wide text-slate-500">{active?.label ?? 'Total expense'}</span><span className="mt-0.5 text-sm font-black tracking-tight text-slate-900 dark:text-slate-100">{amount(active?.value ?? total)}</span><span className="text-[10px] font-semibold text-slate-500">{active ? `${active.percent}% of total` : 'MMK'}</span></div>{active && <div className="pointer-events-none absolute z-20 transition-all duration-75" style={{ left: `${active.tooltipX / 240 * 100}%`, top: `${active.tooltipY / 240 * 100}%`, transform: `translate(${active.tooltipX / 240 > .65 ? '-95%' : active.tooltipX / 240 < .35 ? '-5%' : '-50%'}, ${active.tooltipY / 240 < .35 ? '8px' : '-115%'})` }}><div className="whitespace-nowrap rounded-lg border border-slate-700/50 bg-slate-800/95 px-3 py-2 text-[11px] text-white shadow-xl"><b>{active.label}</b><div className="mt-1 text-slate-300"><b className="text-white">{amount(active.value)} MMK</b> ({active.percent}%)</div></div></div>}</div></div><div className="w-full divide-y divide-slate-100 rounded-lg border border-slate-200 bg-slate-50/50 dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950/30">{slices.map((slice) => <div key={slice.label} className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3 py-2.5 transition-colors ${hoveredIndex === slice.index ? 'rounded-md bg-slate-200/60 dark:bg-slate-800/60' : 'cursor-pointer hover:bg-slate-100/50 dark:hover:bg-slate-900/40'}`} onMouseEnter={() => setHoveredIndex(slice.index)} onMouseLeave={() => setHoveredIndex(null)}><span className="flex min-w-0 items-center gap-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200"><span className="h-3 w-3 shrink-0 rounded-full ring-2 ring-white shadow-sm dark:ring-slate-950" style={{ background: slice.color }} />{slice.label}</span><span className="ml-auto whitespace-nowrap text-right text-xs font-bold text-slate-600 dark:text-slate-300">{amount(slice.value)} MMK <span className="font-medium text-slate-500">({slice.percent}%)</span></span></div>)}</div></div>;
 }
 
 function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [string, number, number])[] }) {
@@ -385,9 +394,7 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
 
 function FinanceWorkspace({ data }: { data?: CommerceWorkspaceData['finance'] }) {
   const monthly: [string, number, number][] = data?.timeline.length ? data.timeline.map((item) => [item.label, item.revenue, item.expense]) : [['Feb', 0, 0], ['Mar', 0, 0], ['Apr', 0, 0], ['May', 0, 0], ['Jun', 0, 0], ['Jul', 0, 0]];
-  const maxTimelineValue = Math.max(1, ...monthly.flatMap(([, revenue, expense]) => [revenue, expense]));
-  const breakdown: [string, number, string][] = data?.expenseBreakdown.length ? data.expenseBreakdown.map((item, index) => [item.category, item.percent, ['#0ea5e9', '#8b5cf6', '#f59e0b', '#64748b', '#10b981'][index] ?? '#64748b']) : [];
-  const donut = `conic-gradient(${breakdown.map(([,, color], index) => { const start = breakdown.slice(0, index).reduce((sum, [, percent]) => sum + Number(percent), 0); const percent = Number(breakdown[index][1]); return `${color} ${start}% ${start + percent}%`; }).join(', ')})`;
+  const breakdown: [string, number, number, string][] = data?.expenseBreakdown.length ? data.expenseBreakdown.map((item, index) => [item.category, item.percent, item.value, ['#0ea5e9', '#94a3b8', '#f59e0b', '#64748b', '#8b5cf6'][index] ?? '#64748b']) : [];
   const [typeFilter, setTypeFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -408,8 +415,8 @@ function FinanceWorkspace({ data }: { data?: CommerceWorkspaceData['finance'] })
         </div>}
       </section>}
       <div className="space-y-6">
-        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Revenue vs Expense Timeline</h2></div><div className="px-4 pb-5 sm:px-6">{monthly.every(([, revenue, expense]) => revenue === 0 && expense === 0) ? <p className="py-12 text-center text-sm text-slate-500">No timeline data yet.</p> : <><div className="flex items-center justify-center gap-6 text-sm font-semibold text-slate-600 dark:text-slate-300"><span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm border-4 border-sky-500" />Revenue</span><span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm border-4 border-red-500" />Expense</span></div><div className="relative h-80 w-full sm:h-96"><FinanceTimelineChart monthly={monthly} maxTimelineValue={maxTimelineValue} /></div></>}</div></section>
-        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Expense Breakdown</h2></div><div className="p-5 sm:p-6">{breakdown.length === 0 ? <p className="py-12 text-center text-sm text-slate-500">No expense breakdown yet.</p> : <div className="grid min-h-72 grid-cols-1 items-center gap-8 md:grid-cols-[minmax(0,1fr)_220px]"><div className="flex justify-center"><div className="relative h-56 w-56 rounded-full shadow-sm" style={{ background: donut }} aria-label="Expense breakdown donut chart"><div className="absolute inset-14 rounded-full bg-card shadow-inner" /></div></div><div className="space-y-3">{breakdown.map(([name, percent, color]) => <div key={name} className="flex items-center gap-3 text-sm font-semibold text-slate-600 dark:text-slate-300"><span className="h-3 w-8 shrink-0 rounded-sm" style={{ background: color }} /><span className="min-w-0 flex-1 truncate">{name}</span><span className="text-xs text-slate-500">{percent}%</span></div>)}</div></div>}</div></section>
+        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Revenue vs Expense Timeline</h2></div><div className="px-4 pb-5 sm:px-6">{monthly.every(([, revenue, expense]) => revenue === 0 && expense === 0) ? <p className="py-12 text-center text-sm text-slate-500">No timeline data yet.</p> : <FinanceTimelineChart monthly={monthly} />}</div></section>
+        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Expense Breakdown</h2></div><div className="p-5 sm:p-6">{breakdown.length === 0 ? <p className="py-12 text-center text-sm text-slate-500">No expense breakdown yet.</p> : <ExpenseBreakdownChart items={breakdown} />}</div></section>
       </div>
       <section id="finance-records-table" className="overflow-hidden rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
         <div className="border-b-2 border-slate-200 bg-slate-50/60 p-6 dark:border-slate-800 dark:bg-slate-950/40"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Finance Records</h2><div className="flex flex-wrap items-center gap-2"><Select value={typeFilter} onValueChange={(value) => value && setTypeFilter(value)}><SelectTrigger className="h-9 w-32 rounded border-2 border-slate-300 bg-card text-xs font-bold text-slate-800 dark:border-slate-800 dark:text-slate-200">{typeFilter}</SelectTrigger><SelectContent><SelectItem value="All">All</SelectItem><SelectItem value="Income">Income</SelectItem><SelectItem value="Expense">Expense</SelectItem></SelectContent></Select><Select value={categoryFilter} onValueChange={(value) => value && setCategoryFilter(value)}><SelectTrigger className="h-9 w-36 rounded border-2 border-slate-300 bg-card text-xs font-bold text-slate-800 dark:border-slate-800 dark:text-slate-200">{categoryFilter}</SelectTrigger><SelectContent><SelectItem value="All">All</SelectItem><SelectItem value="Product Sales">Product Sales</SelectItem><SelectItem value="Inventory">Inventory</SelectItem><SelectItem value="Marketing">Marketing</SelectItem></SelectContent></Select></div></div></div>
