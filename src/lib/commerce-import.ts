@@ -53,6 +53,21 @@ export function isSalesOrdersHeaders(headers: unknown[]): boolean {
   );
 }
 
+// CS sheets share "Customer Name" with sales sheets, so this must be checked
+// AFTER isSalesOrdersHeaders. CS-specific markers: Next Follow Up / CSAT /
+// Purchased Product / Last Contact Note.
+export function isCustomerServiceHeaders(headers: unknown[]): boolean {
+  const h = headers.map(normalizeHeaderKey);
+  if (!h.includes("customer name")) return false;
+  return (
+    h.includes("next follow up") ||
+    h.includes("csat") ||
+    h.includes("purchased product") ||
+    h.includes("purchased service") ||
+    h.includes("last contact note")
+  );
+}
+
 // ─── Row parsing ─────────────────────────────────────────────────────────────
 
 const BURMESE_DIGIT_MAP: Record<string, string> = {
@@ -341,6 +356,156 @@ export async function createSalesOrdersFromRows(rows: ParsedSalesOrderRow[], use
           customerId,
           action: "demand_report",
           description: `Telegram sales import · ${deal.id}`,
+        },
+      });
+    }
+    count += 1;
+  }
+  return count;
+}
+
+// ─── Customer service records ────────────────────────────────────────────────
+
+export type ParsedCustomerServiceRow = {
+  contactDate: Date | null;
+  customerName: string | null;
+  company: string | null;
+  phone: string | null;
+  email: string | null;
+  purchasedProduct: string | null;
+  purchaseAmount: number | null;
+  status: string | null;
+  nextFollowUp: Date | null;
+  csat: string | null;
+  lastContactNote: string | null;
+};
+
+export function parseCustomerServiceRows(fileBuffer: Buffer): ParsedCustomerServiceRow[] {
+  const parsed: ParsedCustomerServiceRow[] = [];
+  for (const rows of readWorkbookRows(fileBuffer)) {
+    for (const row of rows) {
+      const get = makeRowAccessor(row);
+      const customerName = String(get("Customer Name", "Customer") ?? "").trim() || null;
+      const purchasedProduct = String(get("Purchased Product", "Purchased Service") ?? "").trim() || null;
+      const status = String(get("Status") ?? "").trim() || null;
+      // Require a customer plus at least one CS signal so blank/other rows skip.
+      if (!customerName || (!purchasedProduct && !status && get("Next Follow Up") == null && get("CSAT") == null)) continue;
+      parsed.push({
+        contactDate: parseExcelDate(get("Date")),
+        customerName,
+        company: String(get("Company") ?? "").trim() || null,
+        phone: formatPhoneNumber(String(get("Phone", "Phone Number") ?? "")) || null,
+        email: String(get("Email") ?? "").trim() || null,
+        purchasedProduct,
+        purchaseAmount: toNumber(get("Purchase Amount (MMK)", "Purchase Amount MMK", "Purchase Amount")),
+        status,
+        nextFollowUp: parseExcelDate(get("Next Follow Up", "Next Follow-Up")),
+        csat: String(get("CSAT") ?? "").trim() || null,
+        lastContactNote: String(get("Last Contact Note") ?? "").trim() || null,
+      });
+    }
+  }
+  return parsed;
+}
+
+function csStageFor(status: string | null, purchaseAmount: number | null): {
+  stage: DealStageValue;
+  fulfillmentStatus: FulfillmentStatusValue;
+} {
+  const v = (status ?? "").toLowerCase();
+  if (/cancel|lost|refund/.test(v)) return { stage: DealStage.LOST, fulfillmentStatus: FulfillmentStatus.CANCELLED };
+  if (/pend|follow|wait/.test(v)) return { stage: DealStage.PENDING, fulfillmentStatus: FulfillmentStatus.PENDING };
+  if (/active|purchas|complet|won|deliver|done|closed/.test(v)) return { stage: DealStage.WON, fulfillmentStatus: FulfillmentStatus.FULFILLED };
+  // No explicit status: treat rows with a purchase as completed sales.
+  if (purchaseAmount && purchaseAmount > 0) return { stage: DealStage.WON, fulfillmentStatus: FulfillmentStatus.FULFILLED };
+  return { stage: DealStage.FOLLOW_UP_NEEDED, fulfillmentStatus: FulfillmentStatus.NOT_APPLICABLE };
+}
+
+async function resolveCsCustomerId(
+  row: ParsedCustomerServiceRow,
+  userId: string
+): Promise<string | null> {
+  if (!row.customerName) return null;
+  const nameNormalized = row.customerName.toLowerCase().replace(/\s+/g, " ").trim();
+  const customer = await prisma.customer.upsert({
+    where: { userId_nameNormalized: { userId, nameNormalized } },
+    create: {
+      userId,
+      name: row.customerName,
+      nameNormalized,
+      phone: row.phone,
+      email: row.email,
+      company: row.company,
+    },
+    update: {
+      ...restoreData(userId),
+      ...(row.phone ? { phone: row.phone } : {}),
+      ...(row.email ? { email: row.email } : {}),
+      ...(row.company ? { company: row.company } : {}),
+      status: "active",
+    },
+    select: { id: true },
+  });
+  return customer.id;
+}
+
+export async function createCustomerServiceRecordsFromRows(
+  rows: ParsedCustomerServiceRow[],
+  userId: string
+): Promise<number> {
+  let count = 0;
+  for (const row of rows) {
+    const customerId = await resolveCsCustomerId(row, userId);
+    const contactDate = row.contactDate || new Date();
+    const { stage, fulfillmentStatus } = csStageFor(row.status, row.purchaseAmount);
+    const noteParts = [
+      row.lastContactNote,
+      row.csat ? `CSAT: ${row.csat}` : null,
+      row.contactDate ? `Contact date: ${row.contactDate.toISOString().slice(0, 10)}` : "",
+    ].filter(Boolean);
+
+    const deal = await prisma.deal.create({
+      data: {
+        userId,
+        customerId,
+        stage,
+        fulfillmentStatus,
+        source: "telegram_cs_import",
+        sourceChannel: "Telegram",
+        quotedAmount: row.purchaseAmount && row.purchaseAmount > 0 ? row.purchaseAmount : null,
+        lastContactAt: contactDate,
+        wonAt: stage === DealStage.WON ? contactDate : undefined,
+        lostAt: stage === DealStage.LOST ? contactDate : undefined,
+        note: noteParts.join(" · ") || null,
+        items: row.purchasedProduct
+          ? {
+              create: [{
+                productName: row.purchasedProduct,
+                sku: null,
+                quantity: 1,
+                unitPrice: row.purchaseAmount && row.purchaseAmount > 0 ? row.purchaseAmount : 0,
+              }],
+            }
+          : undefined,
+      },
+    });
+
+    if (row.nextFollowUp || row.lastContactNote) {
+      await prisma.followUpNote.create({
+        data: {
+          dealId: deal.id,
+          aiDraftedText: row.lastContactNote || "Imported customer service record",
+          intentDetected: row.status || undefined,
+          suggestedFollowUpDate: row.nextFollowUp || undefined,
+        },
+      });
+    }
+    if (customerId) {
+      await prisma.customerActivity.create({
+        data: {
+          customerId,
+          action: "customer_service",
+          description: `Telegram customer service import · ${deal.id}`,
         },
       });
     }

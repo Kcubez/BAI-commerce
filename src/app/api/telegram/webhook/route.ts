@@ -11,15 +11,19 @@ import {
 import { analyzeDemandRecord } from "@/lib/demand-analysis";
 import { parseCommerceMessageWithGemini } from "@/lib/commerce-parser";
 import {
+  createCustomerServiceRecordsFromRows,
   createMarketingMetricsFromRows,
   createSalesOrdersFromRows,
+  isCustomerServiceHeaders,
   isMarketingMetricsHeaders,
   isProductCatalogHeaders,
   isSalesOrdersHeaders,
+  parseCustomerServiceRows,
   parseMarketingMetricsRows,
   parseProductCatalogRows,
   parseSalesOrderRows,
   upsertProductsFromRows,
+  type ParsedCustomerServiceRow,
   type ParsedMarketingRow,
   type ParsedProductRow,
   type ParsedSalesOrderRow,
@@ -683,7 +687,8 @@ function getCustomerServiceFormatPrompt(): string {
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    "📄 စာသားဖြင့် တိုက်ရိုက်ပို့နိုင်ပါသည်",
+    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
+    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
     "",
     "📝 <b>စာသားပုံစံ:</b>",
     "<pre>",
@@ -699,6 +704,9 @@ function getCustomerServiceFormatPrompt(): string {
     "• CSAT: [အမှတ်]",
     "• Last Contact Note: [မှတ်ချက်]",
     "</pre>",
+    "",
+    "📊 <b>Excel columns:</b>",
+    "<pre>Date | Customer Name | Company | Phone | Email | Purchased Product | Purchase Amount (MMK) | Status | Next Follow Up | CSAT | Last Contact Note</pre>",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
   ].join("\n");
@@ -921,8 +929,10 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
-        "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
+        "Excel Row 1 အတွက် -",
+        "<code>Date, Customer Name, Company, Phone, Email, Purchased Product, Purchase Amount (MMK), Status, Next Follow Up, CSAT, Last Contact Note</code>",
         "",
+        "စာသားပုံစံအတွက် ဖိနှိပ်၍ Copy ကူးယူပါ -",
         "<code>• Date: \n• Customer Name: \n• Company: \n• Phone: \n• Email: \n• Purchased Product: \n• Purchase Amount MMK: \n• Status: \n• Next Follow Up: \n• CSAT: \n• Last Contact Note: </code>",
       ].join("\n");
     case 'finance_transactions':
@@ -1414,12 +1424,13 @@ async function processFileInBackground({
     fileInfo.fileName.endsWith(".csv");
 
   try {
-    type ImportKind = 'finance' | 'product_catalog' | 'marketing_metrics' | 'sales_orders';
+    type ImportKind = 'finance' | 'product_catalog' | 'marketing_metrics' | 'sales_orders' | 'customer_service';
     let importKind: ImportKind | null = null;
     let parsedFinanceRecords: FinanceRecord[] = [];
     let parsedProductRows: ParsedProductRow[] = [];
     let parsedMarketingRows: ParsedMarketingRow[] = [];
     let parsedSalesRows: ParsedSalesOrderRow[] = [];
+    let parsedCsRows: ParsedCustomerServiceRow[] = [];
 
   if (isSpreadsheet) {
     try {
@@ -1433,6 +1444,7 @@ async function processFileInBackground({
           else if (isProductCatalogHeaders(headers)) importKind = 'product_catalog';
           else if (isMarketingMetricsHeaders(headers)) importKind = 'marketing_metrics';
           else if (isSalesOrdersHeaders(headers)) importKind = 'sales_orders';
+          else if (isCustomerServiceHeaders(headers)) importKind = 'customer_service';
         }
       }
     } catch (err) {
@@ -1444,6 +1456,7 @@ async function processFileInBackground({
     else if (!importKind && activeMode === 'demand_report') importKind = 'sales_orders';
     else if (!importKind && activeMode === 'inventory_import') importKind = 'product_catalog';
     else if (!importKind && activeMode === 'marketing_import') importKind = 'marketing_metrics';
+    else if (!importKind && activeMode === 'customer_service') importKind = 'customer_service';
 
     try {
       switch (importKind) {
@@ -1459,6 +1472,9 @@ async function processFileInBackground({
         case 'sales_orders':
           parsedSalesRows = parseSalesOrderRows(downloadedBuffer);
           break;
+        case 'customer_service':
+          parsedCsRows = parseCustomerServiceRows(downloadedBuffer);
+          break;
       }
     } catch (err) {
       console.error(`Error parsing ${importKind} spreadsheet:`, err);
@@ -1470,6 +1486,7 @@ async function processFileInBackground({
       importKind === 'finance' ? parsedFinanceRecords.length :
       importKind === 'product_catalog' ? parsedProductRows.length :
       importKind === 'marketing_metrics' ? parsedMarketingRows.length :
+      importKind === 'customer_service' ? parsedCsRows.length :
       parsedSalesRows.length;
 
     if (!settings.userId) {
@@ -1502,6 +1519,8 @@ async function processFileInBackground({
       createdCount = await createMarketingMetricsFromRows(parsedMarketingRows, settings.userId);
     } else if (importKind === 'sales_orders') {
       createdCount = await createSalesOrdersFromRows(parsedSalesRows, settings.userId);
+    } else if (importKind === 'customer_service') {
+      createdCount = await createCustomerServiceRecordsFromRows(parsedCsRows, settings.userId);
     }
 
     const successTitle: Record<ImportKind, string> = {
@@ -1509,12 +1528,14 @@ async function processFileInBackground({
       product_catalog: "✅ <b>Product Catalog / Inventory တင်သွင်းပြီးပါပြီ</b>",
       marketing_metrics: "✅ <b>Marketing Metrics တင်သွင်းပြီးပါပြီ</b>",
       sales_orders: "✅ <b>Sales Orders တင်သွင်းပြီးပါပြီ</b>",
+      customer_service: "✅ <b>Customer Service မှတ်တမ်းများ တင်သွင်းပြီးပါပြီ</b>",
     };
     const successBody: Record<ImportKind, string> = {
       finance: `📊 <b>အရေအတွက်:</b> <code>${createdCount}</code> စောင်ကို Commerce Finance ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
       product_catalog: `📦 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Inventory ထဲသို့ update လုပ်ပြီးပါပြီ။`,
       marketing_metrics: `📈 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Marketing Metrics ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
       sales_orders: `🛒 <b>အရေအတွက်:</b> <code>${createdCount}</code> orders ကို Sales module ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
+      customer_service: `🎧 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Customer Service ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
     };
 
     if (progressMsgId) {
@@ -1543,6 +1564,7 @@ async function processFileInBackground({
     "• Product Catalog — Product Code, Product Name, Category, Unit Cost, Selling Price, Stock Qty, Low Stock Threshold",
     "• Marketing Metrics — Date, Channel, Spend, Reach, Impressions, Ad-driven Orders, Notes",
     "• Sales Orders — Date, Customer Name, Phone, Product Name, Product Code, Quantity, Unit Price, Stage, Fulfillment Status, Notes",
+    "• Customer Service — Date, Customer Name, Company, Phone, Email, Purchased Product, Purchase Amount (MMK), Status, Next Follow Up, CSAT, Last Contact Note",
   ].join("\n");
   await sendOrEditMessage({ botToken: settings.botToken, chatId, progressMsgId, text: unsupportedText });
   } catch (err) {
@@ -1561,7 +1583,7 @@ async function processFileInBackground({
   }
 }
 
-function getExpectedColumnsHint(kind: 'finance' | 'product_catalog' | 'marketing_metrics' | 'sales_orders'): string {
+function getExpectedColumnsHint(kind: 'finance' | 'product_catalog' | 'marketing_metrics' | 'sales_orders' | 'customer_service'): string {
   switch (kind) {
     case 'finance':
       return "💡 Columns: Date • Description • Category • Type • Amount (MMK) • Payment Method • Reference • Notes";
@@ -1571,6 +1593,8 @@ function getExpectedColumnsHint(kind: 'finance' | 'product_catalog' | 'marketing
       return "💡 Columns: Date • Channel • Spend • Reach • Impressions • Ad-driven Orders • Notes";
     case 'sales_orders':
       return "💡 Columns: Date • Customer Name • Phone • Product Name • Product Code • Quantity • Unit Price • Stage • Fulfillment Status • Notes";
+    case 'customer_service':
+      return "💡 Columns: Date • Customer Name • Company • Phone • Email • Purchased Product • Purchase Amount (MMK) • Status • Next Follow Up • CSAT • Last Contact Note";
   }
 }
 
