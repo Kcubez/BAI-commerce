@@ -195,6 +195,16 @@ function buildRecommendations(data: {
       actionType: data.targetConfigured ? "view_finance" : "set_target_modal",
     },
     {
+      area: "finance",
+      severity: data.expense > data.revenue ? "warning" : "info",
+      title: "အသုံးစရိတ် Category များကို ပုံမှန်ပြန်စစ်ပါ",
+      insight: data.expense > 0
+        ? `လက်ရှိကာလတွင် အသုံးစရိတ် ${formatMmk(data.expense)} MMK ရှိနေပါသည်။ အကြီးဆုံး Category များကို စစ်ဆေးပြီး မလိုအပ်သောကုန်ကျစရိတ် လျှော့ချပါ။`
+        : "အသုံးစရိတ်များ မှတ်တမ်းတင်လာပါက Category အလိုက် ပြန်လည်သုံးသပ်နိုင်မည်ဖြစ်သည်။",
+      action: "Finance Records စစ်ဆေးရန်",
+      actionType: "view_finance",
+    },
+    {
       area: "inventory",
       severity: "info",
       title: "ကုန်ပစ္စည်း အခြေအနေကို ဆက်လက်စောင့်ကြည့်ပါ",
@@ -207,7 +217,7 @@ function buildRecommendations(data: {
   ];
   for (const fallback of defaults) {
     if (recs.length >= 4) break;
-    if (!recs.some((rec) => rec.actionType === fallback.actionType && rec.area === fallback.area)) {
+    if (!recs.some((rec) => rec.title === fallback.title)) {
       recs.push(fallback);
     }
   }

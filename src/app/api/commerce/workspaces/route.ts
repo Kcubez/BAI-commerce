@@ -45,10 +45,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: "Invalid period" }, { status: 400 });
   }
 
-  const timeline = sixMonthRange(end);
+  // Overall uses an unbounded KPI range, but the timeline must still be based
+  // on real calendar months. Anchoring it to today avoids a 9999-date range.
+  const timeline = sixMonthRange(resolved.period === "overall" ? new Date() : end);
   const userWhere = ownedByUserOrAdmin(session);
   const dateRange = { gte: start, lt: end };
-  const sixMonthDateRange = { gte: timeline.start, lt: end };
+  const sixMonthDateRange = { gte: timeline.start, lt: resolved.period === "overall" ? new Date() : end };
 
   const [
     wonDeals,
@@ -140,7 +142,7 @@ export async function GET(req: NextRequest) {
       type: "Expense",
       amount: item.amount,
     })),
-  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20);
+  ].sort((a, b) => b.date.localeCompare(a.date));
 
   const stageMap: Record<string, { label: string; count: number; deals: { id: string; customer: string; amount: number }[] }> = {
     NEW_LEAD: { label: "New Leads", count: 0, deals: [] },
