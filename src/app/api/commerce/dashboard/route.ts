@@ -49,7 +49,8 @@ export async function GET(req: NextRequest) {
     wonDeals,
     periodDeals,
     fulfilledOrders,
-    newCustomers,
+    customers,
+    customerFirstDeals,
     expenses,
     lowStockCount,
     recentMessages,
@@ -79,8 +80,18 @@ export async function GET(req: NextRequest) {
         OR: [{ wonAt: dateRange }, { wonAt: null, createdAt: dateRange }],
       },
     }),
-    prisma.customer.count({
-      where: { ...customerOwnedByUserOrAdmin(session), ...notDeleted, createdAt: dateRange },
+    prisma.customer.findMany({
+      where: { ...customerOwnedByUserOrAdmin(session), ...notDeleted },
+      select: { id: true, createdAt: true },
+    }),
+    // A customer can have been created when an old spreadsheet was imported,
+    // even though the related order is backdated. Use the earliest business
+    // record as the customer's first-seen date so historic imports appear in
+    // their real month rather than the import month.
+    prisma.deal.groupBy({
+      by: ["customerId"],
+      where: { ...userWhere, ...notDeleted, customerId: { not: null } },
+      _min: { createdAt: true },
     }),
     prisma.expense.findMany({
       where: { ...userWhere, ...notDeleted, expenseDate: dateRange },
@@ -108,6 +119,18 @@ export async function GET(req: NextRequest) {
   const revenue = wonDeals.reduce((sum, deal) => sum + dealRevenue(deal), 0);
   const expense = expenses.reduce((sum, item) => sum + item.amount, 0);
   const profitMargin = revenue > 0 ? ((revenue - expense) / revenue) * 100 : 0;
+  const firstDealDateByCustomerId = new Map(
+    customerFirstDeals
+      .filter((deal) => deal.customerId !== null && deal._min.createdAt !== null)
+      .map((deal) => [deal.customerId!, deal._min.createdAt!] as const),
+  );
+  const newCustomers = customers.filter((customer) => {
+    const firstDealDate = firstDealDateByCustomerId.get(customer.id);
+    const firstSeenAt = firstDealDate && firstDealDate < customer.createdAt
+      ? firstDealDate
+      : customer.createdAt;
+    return firstSeenAt >= start && firstSeenAt < end;
+  }).length;
 
   const incomeTrend = buckets.labels.map((label) => ({ label, value: 0 }));
   const orderTrend = buckets.labels.map((label) => ({ label, value: 0 }));
