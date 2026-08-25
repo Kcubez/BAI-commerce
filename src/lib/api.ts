@@ -200,11 +200,11 @@ export type CommerceDashboardParams = {
 };
 
 export type CommerceTargetValues = {
-  targetSalesAmount: number;
-  targetExpenseAmount: number;
-  targetDemandCount: number;
-  targetAppointments: number;
-  targetNewCustomers: number;
+  targetSalesAmount: number | null;
+  targetExpenseAmount: number | null;
+  targetDemandCount: number | null;
+  targetAppointments: number | null;
+  targetNewCustomers: number | null;
 };
 
 export type CommerceDashboardKpi = {
@@ -213,7 +213,7 @@ export type CommerceDashboardKpi = {
   target: string;
   expected: string;
   status: string;
-  tone: "emerald" | "red" | "sky" | "amber";
+  tone: "emerald" | "red" | "sky" | "amber" | "slate";
   icon: "DollarSign" | "Wallet" | "TrendingUp" | "Megaphone" | "CalendarCheck" | "Users";
   progressPercent: number;
 };

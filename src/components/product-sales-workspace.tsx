@@ -56,7 +56,7 @@ import {
 import { toast } from 'sonner';
 
 type Workspace = 'overview' | 'finance' | 'sales' | 'marketing' | 'customers' | 'inventory';
-type CardTone = 'emerald' | 'red' | 'sky' | 'amber';
+type CardTone = 'emerald' | 'red' | 'sky' | 'amber' | 'slate';
 
 const amount = (value: number) => value.toLocaleString();
 
@@ -99,8 +99,9 @@ function ProgressCard({
     red: 'bg-red-500 text-red-500',
     sky: 'bg-sky-500 text-sky-600',
     amber: 'bg-amber-500 text-amber-600',
+    slate: 'bg-slate-400 text-slate-500',
   }[tone];
-  const progress = progressPercent ?? (tone === 'emerald' ? 96 : tone === 'red' ? 28 : tone === 'amber' ? 62 : 68);
+  const progress = progressPercent ?? (tone === 'emerald' ? 96 : tone === 'red' ? 28 : tone === 'amber' ? 62 : tone === 'slate' ? 0 : 68);
 
   return (
     <section className="bg-card border-2 border-slate-300 dark:border-slate-800 p-6 flex flex-col justify-between h-48 rounded-xl shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:border-slate-400 dark:hover:border-slate-700 transition-all duration-200">
@@ -505,11 +506,13 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
     dateTo,
   } = useDateFilter('workspace_filter');
   const [isTargetDialogOpen, setIsTargetDialogOpen] = useState(false);
-  const [targetRevenue, setTargetRevenue] = useState('30000000');
-  const [targetExpense, setTargetExpense] = useState('11000000');
-  const [targetOrders, setTargetOrders] = useState('220');
-  const [targetFulfilledOrders, setTargetFulfilledOrders] = useState('220');
-  const [targetNewCustomers, setTargetNewCustomers] = useState('120');
+  // Start blank like BAI-service: only values the owner actually saved are
+  // prefilled, never hardcoded defaults.
+  const [targetRevenue, setTargetRevenue] = useState('');
+  const [targetExpense, setTargetExpense] = useState('');
+  const [targetOrders, setTargetOrders] = useState('');
+  const [targetFulfilledOrders, setTargetFulfilledOrders] = useState('');
+  const [targetNewCustomers, setTargetNewCustomers] = useState('');
   const [isDeleteAllOpen, setIsDeleteAllOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
@@ -536,11 +539,12 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
 
   useEffect(() => {
     if (!dashboard?.targets) return;
-    setTargetRevenue(String(dashboard.targets.targetSalesAmount));
-    setTargetExpense(String(dashboard.targets.targetExpenseAmount));
-    setTargetOrders(String(dashboard.targets.targetDemandCount));
-    setTargetFulfilledOrders(String(dashboard.targets.targetAppointments));
-    setTargetNewCustomers(String(dashboard.targets.targetNewCustomers));
+    const prefill = (value: number | null) => (value !== null && value !== undefined ? String(value) : '');
+    setTargetRevenue(prefill(dashboard.targets.targetSalesAmount));
+    setTargetExpense(prefill(dashboard.targets.targetExpenseAmount));
+    setTargetOrders(prefill(dashboard.targets.targetDemandCount));
+    setTargetFulfilledOrders(prefill(dashboard.targets.targetAppointments));
+    setTargetNewCustomers(prefill(dashboard.targets.targetNewCustomers));
   }, [dashboard?.targets]);
 
   const iconMap = {
@@ -552,27 +556,45 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
     Users,
   };
 
+  // Loading placeholders — no fake targets, matching the API's "Not set" state.
   const fallbackOverviewCards = [
-    ['Revenue', amount(0), `${amount(30_000_000)} MMK`, `Expected (Day 30): ${amount(30_000_000)}`, 'Below Target', 'red', DollarSign, 0],
-    ['Expense Limit', amount(0), `${amount(11_000_000)} MMK`, `Expected: ${amount(11_000_000)}`, 'On Track', 'emerald', Wallet, 0],
-    ['Profit Margin', '0.0%', '63% Margin', 'Target Margin: 63%', 'Below Target', 'red', TrendingUp, 0],
-    ['Orders Received', '0', '220', 'Expected (Day 30): 220', 'Below Target', 'red', Megaphone, 0],
-    ['Orders Fulfilled', '0', '220', 'Expected (Day 30): 220', 'Below Target', 'red', CalendarCheck, 0],
-    ['New Customers', '0', '120 Target', 'Expected (Day 30): 120', 'Below Target', 'red', Users, 0],
+    ['Revenue', amount(0), 'Not set', 'Set targets to track pacing', 'Not Set', 'slate', DollarSign, 0],
+    ['Expense Limit', amount(0), 'Not set', 'Set targets to track pacing', 'Not Set', 'slate', Wallet, 0],
+    ['Profit Margin', '0.0%', 'Not set', 'Set revenue & expense targets', 'Not Set', 'slate', TrendingUp, 0],
+    ['Orders Received', '0', 'Not set', 'Set targets to track pacing', 'Not Set', 'slate', Megaphone, 0],
+    ['Orders Fulfilled', '0', 'Not set', 'Set targets to track pacing', 'Not Set', 'slate', CalendarCheck, 0],
+    ['New Customers', '0', 'Not set', 'Set targets to track pacing', 'Not Set', 'slate', Users, 0],
   ] as const;
 
   const cards = [
     ...(dashboard?.kpis.map((kpi) => [kpi.title, kpi.value, kpi.target, kpi.expected, kpi.status, kpi.tone, iconMap[kpi.icon], kpi.progressPercent] as const) ?? fallbackOverviewCards),
   ] as const;
 
+  // Targets are stored per calendar period (month/year), matching
+  // /api/settings/target. Non-calendar views anchor to their range's month.
+  const targetAnchorParams = () => {
+    if (period === 'year') return { period: 'year' as const, year: Number(year), month: 0 };
+    if (period === 'month' || period === 'day') return { period: 'month' as const, year: Number(year), month: Number(month) };
+    const base = period === 'custom' && customFrom ? new Date(`${customFrom}T00:00:00Z`) : new Date();
+    return { period: 'month' as const, year: base.getUTCFullYear(), month: base.getUTCMonth() + 1 };
+  };
+  const anchor = targetAnchorParams();
+  const anchorLabel = anchor.period === 'year'
+    ? `${anchor.year} (Yearly)`
+    : new Date(anchor.year, anchor.month - 1).toLocaleString('en', { month: 'long', year: 'numeric' });
+
   function handleSaveTargets() {
+    const orNull = (value: string) => (value.trim() === '' ? null : Number(value));
     saveTargets.mutate({
-      ...dashboardParams,
-      targetSalesAmount: Number(targetRevenue || 0),
-      targetExpenseAmount: Number(targetExpense || 0),
-      targetDemandCount: Number(targetOrders || 0),
-      targetAppointments: Number(targetFulfilledOrders || 0),
-      targetNewCustomers: Number(targetNewCustomers || 0),
+      period: anchor.period,
+      year: anchor.year,
+      month: anchor.month,
+      // Blank inputs clear the target (null) instead of saving zeros.
+      targetSalesAmount: orNull(targetRevenue),
+      targetExpenseAmount: orNull(targetExpense),
+      targetDemandCount: orNull(targetOrders),
+      targetAppointments: orNull(targetFulfilledOrders),
+      targetNewCustomers: orNull(targetNewCustomers),
     }, {
       onSuccess: () => setIsTargetDialogOpen(false),
     });
@@ -700,7 +722,7 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
           <DialogHeader className="flex-row items-center justify-between border-b border-border pb-3">
             <div>
               <DialogTitle className="font-extrabold text-foreground flex items-center gap-2"><Target className="w-5 h-5 text-emerald-500" />Set Period Targets</DialogTitle>
-              <DialogDescription className="mt-0.5 text-[11px] font-bold uppercase tracking-wide">For {periodRangeLabel(period, year, month, day, customFrom, customTo)}</DialogDescription>
+              <DialogDescription className="mt-0.5 text-[11px] font-bold uppercase tracking-wide">Saved for {anchorLabel}</DialogDescription>
             </div>
             <Button aria-label="Close target settings" variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setIsTargetDialogOpen(false)}>✕</Button>
           </DialogHeader>

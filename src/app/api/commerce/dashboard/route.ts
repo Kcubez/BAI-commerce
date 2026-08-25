@@ -6,14 +6,6 @@ import { buildTrendBuckets, elapsedRatio, resolvePeriodRange, targetAnchor, pars
 import type { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 
-const DEFAULT_TARGETS = {
-  targetSalesAmount: 30_000_000,
-  targetExpenseAmount: 11_000_000,
-  targetDemandCount: 220,
-  targetAppointments: 220,
-  targetNewCustomers: 120,
-};
-
 function dealRevenue(deal: { quotedAmount: number | null; items: { quantity: number; unitPrice: number }[] }) {
   const itemTotal = deal.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   return itemTotal || deal.quotedAmount || 0;
@@ -105,22 +97,17 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  const targets = monthTarget ?? yearTarget ?? undefined;
-  // Per-field fallback: a saved row with zeros (e.g. empty dialog submit)
-  // should not blank out the KPI targets.
-  const activeTargets = {
-    targetSalesAmount: targets?.targetSalesAmount || DEFAULT_TARGETS.targetSalesAmount,
-    targetExpenseAmount: targets?.targetExpenseAmount || DEFAULT_TARGETS.targetExpenseAmount,
-    targetDemandCount: targets?.targetDemandCount || DEFAULT_TARGETS.targetDemandCount,
-    targetAppointments: targets?.targetAppointments || DEFAULT_TARGETS.targetAppointments,
-    targetNewCustomers: targets?.targetNewCustomers || DEFAULT_TARGETS.targetNewCustomers,
-  };
+  // Raw saved targets — nulls mean "not set", exactly like BAI-service.
+  // KPI pacing renders "Not set" instead of pretending defaults exist.
+  const savedTargets = monthTarget ?? yearTarget ?? null;
+  const salesTarget = savedTargets?.targetSalesAmount ?? null;
+  const expenseTarget = savedTargets?.targetExpenseAmount ?? null;
+  const demandTarget = savedTargets?.targetDemandCount ?? null;
+  const appointmentsTarget = savedTargets?.targetAppointments ?? null;
+  const newCustomersTarget = savedTargets?.targetNewCustomers ?? null;
   const revenue = wonDeals.reduce((sum, deal) => sum + dealRevenue(deal), 0);
   const expense = expenses.reduce((sum, item) => sum + item.amount, 0);
   const profitMargin = revenue > 0 ? ((revenue - expense) / revenue) * 100 : 0;
-  const targetProfitMargin = activeTargets.targetSalesAmount > 0
-    ? ((activeTargets.targetSalesAmount - activeTargets.targetExpenseAmount) / activeTargets.targetSalesAmount) * 100
-    : 0;
 
   const incomeTrend = buckets.labels.map((label) => ({ label, value: 0 }));
   const orderTrend = buckets.labels.map((label) => ({ label, value: 0 }));
@@ -151,71 +138,120 @@ export async function GET(req: NextRequest) {
   const ratio = elapsedRatio(start, end);
   const expectedToDate = (target: number) => Math.round(target * ratio);
 
+  const targetProfitMargin = salesTarget && expenseTarget && salesTarget > 0
+    ? ((salesTarget - expenseTarget) / salesTarget) * 100
+    : null;
+
+  // KPI target block: real pacing when a target exists, honest "Not set" otherwise.
+  const kpiTarget = (target: number | null, unit: "" | " MMK" | " Target") => {
+    if (target === null || target <= 0) {
+      return { target: "Not set", expected: "Set targets to track pacing", status: "Not Set", tone: "slate" as const };
+    }
+    return {
+      target: `${formatAmount(target)}${unit}`,
+      expected: `Expected to date: ${formatAmount(expectedToDate(target))}`,
+      status: "",
+      tone: null,
+    };
+  };
+
+  const revenueKpi = kpiTarget(salesTarget, " MMK");
+  const expenseKpi = kpiTarget(expenseTarget, " MMK");
+  const marginKpi = targetProfitMargin === null
+    ? { target: "Not set", expected: "Set revenue & expense targets", status: "Not Set", tone: "slate" as const }
+    : {
+        target: `${Math.max(0, targetProfitMargin).toFixed(0)}% Margin`,
+        expected: `Target Margin: ${Math.max(0, targetProfitMargin).toFixed(0)}%`,
+        status: profitMargin >= targetProfitMargin ? "On Track" : "Below Target",
+        tone: profitMargin >= targetProfitMargin ? ("emerald" as const) : ("red" as const),
+      };
+  const ordersKpi = kpiTarget(demandTarget, "");
+  const fulfilledKpi = kpiTarget(appointmentsTarget, "");
+  const customersKpi = kpiTarget(newCustomersTarget, " Target");
+
+  const compareKpi = (value: number, target: number | null, onTrack: string, behind: string) => {
+    if (target === null || target <= 0) return { status: "Not Set", tone: "slate" as const };
+    return value >= target
+      ? { status: onTrack, tone: "emerald" as const }
+      : { status: behind, tone: "red" as const };
+  };
+  const revenueCompare = compareKpi(revenue, salesTarget, "On Track", "Below Target");
+  const expenseCompare = compareKpi(expense, expenseTarget, "On Track", "Over Limit");
+  const ordersCompare = compareKpi(ordersReceived, demandTarget, "On Track", "Below Target");
+  const fulfilledCompare = compareKpi(fulfilledOrders, appointmentsTarget, "On Track", "Below Target");
+  const customersCompare = compareKpi(newCustomers, newCustomersTarget, "On Track", "Below Target");
+
   return NextResponse.json({
     period: periodLabel,
     year: resolved.year,
     month: resolved.month,
-    targets: activeTargets,
+    targets: {
+      targetSalesAmount: salesTarget,
+      targetExpenseAmount: expenseTarget,
+      targetDemandCount: demandTarget,
+      targetAppointments: appointmentsTarget,
+      targetNewCustomers: newCustomersTarget,
+    },
     kpis: [
       {
         title: "Revenue",
         value: formatAmount(revenue),
-        target: `${formatAmount(activeTargets.targetSalesAmount)} MMK`,
-        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetSalesAmount))}`,
-        status: revenue >= activeTargets.targetSalesAmount ? "On Track" : "Below Target",
-        tone: revenue >= activeTargets.targetSalesAmount ? "emerald" : "red",
+        target: revenueKpi.target,
+        expected: revenueKpi.expected,
+        status: revenueCompare.status,
+        tone: revenueCompare.tone,
         icon: "DollarSign",
-        progressPercent: progress(revenue, activeTargets.targetSalesAmount),
+        progressPercent: progress(revenue, salesTarget ?? 0),
       },
       {
         title: "Expense Limit",
         value: formatAmount(expense),
-        target: `${formatAmount(activeTargets.targetExpenseAmount)} MMK`,
-        expected: `Budget to date: ${formatAmount(expectedToDate(activeTargets.targetExpenseAmount))}`,
-        status: expense <= activeTargets.targetExpenseAmount ? "On Track" : "Over Limit",
-        tone: expense <= activeTargets.targetExpenseAmount ? "emerald" : "red",
+        target: expenseKpi.target,
+        expected: expenseKpi.expected,
+        status: expenseCompare.status,
+        tone: expenseCompare.tone,
         icon: "Wallet",
-        progressPercent: progress(expense, activeTargets.targetExpenseAmount),
+        progressPercent: progress(expense, expenseTarget ?? 0),
       },
       {
         title: "Profit Margin",
         value: `${profitMargin.toFixed(1)}%`,
-        target: `${Math.max(0, targetProfitMargin).toFixed(0)}% Margin`,
-        expected: `Target Margin: ${Math.max(0, targetProfitMargin).toFixed(0)}%`,
-        status: profitMargin >= targetProfitMargin ? "On Track" : "Below Target",
-        tone: profitMargin >= targetProfitMargin ? "emerald" : "red",
+        target: marginKpi.target,
+        expected: marginKpi.expected,
+        status: marginKpi.status,
+        tone: marginKpi.tone,
         icon: "TrendingUp",
-        progressPercent: progress(profitMargin, Math.max(1, targetProfitMargin)),
+        progressPercent: progress(profitMargin, Math.max(1, targetProfitMargin ?? 0)),
       },
       {
         title: "Orders Received",
         value: formatAmount(ordersReceived),
-        target: formatAmount(activeTargets.targetDemandCount),
-        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetDemandCount))}`,
-        status: ordersReceived >= activeTargets.targetDemandCount ? "On Track" : "Below Target",
-        tone: ordersReceived >= activeTargets.targetDemandCount ? "emerald" : "red",
+        target: ordersKpi.target,
+        expected: ordersKpi.expected,
+        status: ordersCompare.status,
+        tone: ordersCompare.tone,
         icon: "Megaphone",
-        progressPercent: progress(ordersReceived, activeTargets.targetDemandCount),
+        progressPercent: progress(ordersReceived, demandTarget ?? 0),
       },
       {
         title: "Orders Fulfilled",
         value: formatAmount(fulfilledOrders),
-        target: formatAmount(activeTargets.targetAppointments),
-        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetAppointments))}`,
-        status: fulfilledOrders >= activeTargets.targetAppointments ? "On Track" : "Below Target",
-        tone: fulfilledOrders >= activeTargets.targetAppointments ? "emerald" : "red",
+        target: fulfilledKpi.target,
+        expected: fulfilledKpi.expected,
+        status: fulfilledCompare.status,
+        tone: fulfilledCompare.tone,
         icon: "CalendarCheck",
-        progressPercent: progress(fulfilledOrders, activeTargets.targetAppointments),
+        progressPercent: progress(fulfilledOrders, appointmentsTarget ?? 0),
       },
       {
         title: "New Customers",
         value: formatAmount(newCustomers),
-        target: `${formatAmount(activeTargets.targetNewCustomers)} Target`,
-        expected: `Expected to date: ${formatAmount(expectedToDate(activeTargets.targetNewCustomers))}`,
-        status: newCustomers >= activeTargets.targetNewCustomers ? "On Track" : "Below Target",
-        tone: newCustomers >= activeTargets.targetNewCustomers ? "emerald" : "red",
+        target: customersKpi.target,
+        expected: customersKpi.expected,
+        status: customersCompare.status,
+        tone: customersCompare.tone,
         icon: "Users",
-        progressPercent: progress(newCustomers, activeTargets.targetNewCustomers),
+        progressPercent: progress(newCustomers, newCustomersTarget ?? 0),
       },
     ],
     insights: [],

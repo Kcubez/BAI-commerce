@@ -330,9 +330,9 @@ export async function GET(req: NextRequest) {
 
     const inputData: HeuristicInput = {
       revenue: wonDeals.reduce((sum, deal) => sum + dealRevenue(deal), 0),
-      salesTarget: targets?.targetSalesAmount || 30_000_000,
+      salesTarget: targets?.targetSalesAmount ?? 0,
       expense: expenses._sum.amount ?? 0,
-      expenseTarget: targets?.targetExpenseAmount || 11_000_000,
+      expenseTarget: targets?.targetExpenseAmount ?? 0,
       ordersReceived: periodDeals,
       ordersFulfilled: fulfilledOrders,
       outOfStockCount: outOfStockProducts.length,
@@ -344,7 +344,8 @@ export async function GET(req: NextRequest) {
       missingPhoneCustomers,
       adSpend: marketingAgg._sum.spend ?? 0,
       adOrders: marketingAgg._sum.adDrivenOrders ?? 0,
-      targetConfigured: Boolean(monthTarget ?? yearTarget),
+      // Only pace against a target the owner actually saved (non-zero sales target).
+      targetConfigured: (monthTarget?.targetSalesAmount ?? yearTarget?.targetSalesAmount ?? 0) > 0,
       periodStart: start,
       periodEnd: end,
     };
