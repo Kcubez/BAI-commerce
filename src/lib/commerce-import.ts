@@ -298,7 +298,8 @@ export function parseSalesOrderRows(fileBuffer: Buffer): ParsedSalesOrderRow[] {
 async function resolveCustomerId(
   customerName: string,
   phone: string | null,
-  userId: string
+  userId: string,
+  firstSeenDate?: Date
 ): Promise<string | null> {
   const nameNormalized = customerName.toLowerCase().replace(/\s+/g, " ").trim();
   const customer = await prisma.customer.upsert({
@@ -308,6 +309,8 @@ async function resolveCustomerId(
       name: customerName,
       nameNormalized,
       phone,
+      // Preserve the historical date instead of the import moment.
+      ...(firstSeenDate ? { createdAt: firstSeenDate } : {}),
     },
     update: {
       ...restoreData(userId),
@@ -322,13 +325,15 @@ async function resolveCustomerId(
 export async function createSalesOrdersFromRows(rows: ParsedSalesOrderRow[], userId: string): Promise<number> {
   let count = 0;
   for (const order of rows) {
-    const customerId = order.customerName ? await resolveCustomerId(order.customerName, order.customerPhone, userId) : null;
     const dealDate = order.orderDate || new Date();
+    const customerId = order.customerName ? await resolveCustomerId(order.customerName, order.customerPhone, userId, dealDate) : null;
     const amount = order.unitPrice * order.quantity;
     const deal = await prisma.deal.create({
       data: {
         userId,
         customerId,
+        // Backdate so the deal lands in the order's month, not the import month.
+        createdAt: dealDate,
         stage: order.stage,
         fulfillmentStatus: order.fulfillmentStatus,
         source: "telegram_sales_import",
@@ -436,6 +441,7 @@ async function resolveCsCustomerId(
       phone: row.phone,
       email: row.email,
       company: row.company,
+      ...(row.contactDate ? { createdAt: row.contactDate } : {}),
     },
     update: {
       ...restoreData(userId),
@@ -468,6 +474,8 @@ export async function createCustomerServiceRecordsFromRows(
       data: {
         userId,
         customerId,
+        // Backdate so the record lands in the contact's month.
+        createdAt: contactDate,
         stage,
         fulfillmentStatus,
         source: "telegram_cs_import",

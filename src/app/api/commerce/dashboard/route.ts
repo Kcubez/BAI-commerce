@@ -79,7 +79,13 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "asc" },
     }),
     prisma.deal.count({
-      where: { ...userWhere, ...notDeleted, fulfillmentStatus: "FULFILLED", updatedAt: dateRange },
+      where: {
+        ...userWhere,
+        ...notDeleted,
+        fulfillmentStatus: "FULFILLED",
+        // Won-date based so imported/backdated deals land in their own month.
+        OR: [{ wonAt: dateRange }, { wonAt: null, createdAt: dateRange }],
+      },
     }),
     prisma.customer.count({
       where: { ...customerOwnedByUserOrAdmin(session), ...notDeleted, createdAt: dateRange },
@@ -100,12 +106,14 @@ export async function GET(req: NextRequest) {
   ]);
 
   const targets = monthTarget ?? yearTarget ?? undefined;
+  // Per-field fallback: a saved row with zeros (e.g. empty dialog submit)
+  // should not blank out the KPI targets.
   const activeTargets = {
-    targetSalesAmount: targets?.targetSalesAmount ?? DEFAULT_TARGETS.targetSalesAmount,
-    targetExpenseAmount: targets?.targetExpenseAmount ?? DEFAULT_TARGETS.targetExpenseAmount,
-    targetDemandCount: targets?.targetDemandCount ?? DEFAULT_TARGETS.targetDemandCount,
-    targetAppointments: targets?.targetAppointments ?? DEFAULT_TARGETS.targetAppointments,
-    targetNewCustomers: targets?.targetNewCustomers ?? DEFAULT_TARGETS.targetNewCustomers,
+    targetSalesAmount: targets?.targetSalesAmount || DEFAULT_TARGETS.targetSalesAmount,
+    targetExpenseAmount: targets?.targetExpenseAmount || DEFAULT_TARGETS.targetExpenseAmount,
+    targetDemandCount: targets?.targetDemandCount || DEFAULT_TARGETS.targetDemandCount,
+    targetAppointments: targets?.targetAppointments || DEFAULT_TARGETS.targetAppointments,
+    targetNewCustomers: targets?.targetNewCustomers || DEFAULT_TARGETS.targetNewCustomers,
   };
   const revenue = wonDeals.reduce((sum, deal) => sum + dealRevenue(deal), 0);
   const expense = expenses.reduce((sum, item) => sum + item.amount, 0);
@@ -210,24 +218,7 @@ export async function GET(req: NextRequest) {
         progressPercent: progress(newCustomers, activeTargets.targetNewCustomers),
       },
     ],
-    insights: [
-      {
-        tone: fulfilledOrders < ordersReceived ? "red" : "emerald",
-        title: fulfilledOrders < ordersReceived ? "Orders need dispatch attention" : "Dispatch pace is healthy",
-        text: fulfilledOrders < ordersReceived
-          ? "Fulfilled orders are trailing received orders. Review pending deliveries and assign the next dispatch action."
-          : "Fulfilled orders are keeping pace with received orders for the selected period.",
-        action: "Review queue",
-      },
-      {
-        tone: "emerald",
-        title: topProduct ? "Product opportunity detected" : "Product data is ready",
-        text: topProduct
-          ? `${topProduct.name} is the top product this period. Keep sufficient stock available for the next sales cycle.`
-          : "Once sales messages include products, the strongest product signal will appear here.",
-        action: "View details",
-      },
-    ],
+    insights: [],
     analytics: {
       topProducts,
       liveIntelligence: [

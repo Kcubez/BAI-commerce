@@ -271,7 +271,12 @@ export async function GET(req: NextRequest) {
         where: { ...userWhere, ...notDeleted, createdAt: dateRange },
       }),
       prisma.deal.count({
-        where: { ...userWhere, ...notDeleted, fulfillmentStatus: "FULFILLED", updatedAt: dateRange },
+        where: {
+          ...userWhere,
+          ...notDeleted,
+          fulfillmentStatus: "FULFILLED",
+          OR: [{ wonAt: dateRange }, { wonAt: null, createdAt: dateRange }],
+        },
       }),
       prisma.product.findMany({
         where: { ...userWhere, ...notDeleted, stockQty: { lte: 0 } },
@@ -325,9 +330,9 @@ export async function GET(req: NextRequest) {
 
     const inputData: HeuristicInput = {
       revenue: wonDeals.reduce((sum, deal) => sum + dealRevenue(deal), 0),
-      salesTarget: targets?.targetSalesAmount ?? 30_000_000,
+      salesTarget: targets?.targetSalesAmount || 30_000_000,
       expense: expenses._sum.amount ?? 0,
-      expenseTarget: targets?.targetExpenseAmount ?? 11_000_000,
+      expenseTarget: targets?.targetExpenseAmount || 11_000_000,
       ordersReceived: periodDeals,
       ordersFulfilled: fulfilledOrders,
       outOfStockCount: outOfStockProducts.length,

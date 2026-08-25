@@ -124,22 +124,6 @@ function ProgressCard({
   );
 }
 
-function InsightCard({ title, text, action, tone = 'red' }: { title: string; text: string; action: string; tone?: 'red' | 'emerald' }) {
-  const alert = tone === 'red';
-  return (
-    <section className={`bg-card border-2 ${alert ? 'border-red-300 border-l-red-500' : 'border-emerald-300 border-l-emerald-500'} border-l-8 rounded-xl p-5 shadow-sm`}>
-      <div className="flex items-center gap-3 mb-2">
-        {alert ? <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" /> : <Award className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />}
-        <h2 className="font-bold text-foreground text-base">{title}</h2>
-      </div>
-      <p className="text-sm text-muted-foreground leading-relaxed">{text}</p>
-      <Button className={`mt-4 h-9 rounded-lg text-xs font-bold ${alert ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
-        {action}
-      </Button>
-    </section>
-  );
-}
-
 const recommendationActionLink: Record<CommerceActionRecommendation['actionType'], string> = {
   view_sales: '/sales',
   view_finance: '/finance',
@@ -169,7 +153,6 @@ function SmartSuggestions({
           <h2 className="flex items-center gap-2 text-sm font-bold text-foreground">
             <Bot className="h-4 w-4 text-sky-600" />
             Smart Suggestions
-            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">Code-calculated</span>
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">Suggestions are hidden until you choose to review them.</p>
         </div>
@@ -700,12 +683,6 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
 
       {!recsLoading && (
         <SmartSuggestions recommendations={recommendationsData?.recommendations} isLoading={recsLoading} onSetTargets={() => setIsTargetDialogOpen(true)} />
-      )}
-
-      {(dashboard?.insights.length ?? 0) > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {dashboard!.insights.map((insight) => <InsightCard key={insight.title} title={insight.title} text={insight.text} action={insight.action} tone={insight.tone} />)}
-        </div>
       )}
 
       <BusinessOverviewAnalytics dashboard={dashboard} periodLabel={periodRangeLabel(period, year, month, day, customFrom, customTo)} />

@@ -218,20 +218,12 @@ export type CommerceDashboardKpi = {
   progressPercent: number;
 };
 
-export type CommerceDashboardInsight = {
-  tone: "red" | "emerald";
-  title: string;
-  text: string;
-  action: string;
-};
-
 export type CommerceDashboard = {
   period: string;
   year: number;
   month: number;
   targets: CommerceTargetValues;
   kpis: CommerceDashboardKpi[];
-  insights: CommerceDashboardInsight[];
   analytics: {
     topProducts: { name: string; sku: string | null; quantity: number; income: number }[];
     liveIntelligence: { area: string; text: string }[];

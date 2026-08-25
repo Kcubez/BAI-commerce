@@ -104,6 +104,9 @@ async function createFinanceRecord({
   if (record.amount <= 0) return null;
 
   if (record.type.toLowerCase() === "income") {
+    // No DealItems here: income rows are summaries (e.g. "Product sales week 1"),
+    // and items would pollute the Top Performing Products table. Revenue counts
+    // via quotedAmount.
     return prisma.deal.create({
       data: {
         userId,
@@ -112,17 +115,11 @@ async function createFinanceRecord({
         source: "telegram_finance",
         sourceChannel: "Telegram",
         quotedAmount: record.amount,
+        // Backdate so the income lands in the transaction's month.
+        createdAt: record.date,
         lastContactAt: record.date,
         wonAt: record.date,
         note: [record.description, record.notes, record.reference ? `Ref: ${record.reference}` : ""].filter(Boolean).join(" · "),
-        items: {
-          create: [{
-            productName: record.description || "Finance income",
-            sku: null,
-            quantity: 1,
-            unitPrice: record.amount,
-          }],
-        },
       },
     });
   }
