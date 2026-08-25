@@ -5,25 +5,39 @@ import { customerOwnedByUserOrAdmin, ownedByUserOrAdmin } from "@/lib/tenant-sco
 import { monthNames, parsePeriodParams, resolvePeriodRange } from "@/lib/period-range";
 import { NextRequest, NextResponse } from "next/server";
 
-function sixMonthRange(end: Date) {
-  const startMonthIndex = end.getUTCMonth() - 6;
-  const start = new Date(Date.UTC(end.getUTCFullYear(), startMonthIndex, 1));
-  return {
-    start,
-    labels: Array.from({ length: 6 }, (_, index) => {
-      const date = new Date(Date.UTC(start.getUTCFullYear(), startMonthIndex + index, 1));
-      return monthNames[date.getUTCMonth()];
-    }),
-  };
-}
-
 function dealTotal(deal: { quotedAmount: number | null; items: { quantity: number; unitPrice: number }[] }) {
   const itemTotal = deal.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   return itemTotal || deal.quotedAmount || 0;
 }
 
-function timelineIndex(date: Date, start: Date) {
-  return (date.getUTCFullYear() - start.getUTCFullYear()) * 12 + (date.getUTCMonth() - start.getUTCMonth());
+function buildFinanceTimeline(
+  period: string,
+  selectedStart: Date,
+  selectedEnd: Date,
+  revenueEvents: { date: Date; value: number }[],
+  expenseEvents: { date: Date; value: number }[],
+) {
+  const allEvents = [...revenueEvents, ...expenseEvents];
+  if (allEvents.length === 0) return [];
+  const firstEvent = new Date(Math.min(...allEvents.map((event) => event.date.getTime())));
+  const lastEvent = new Date(Math.max(...allEvents.map((event) => event.date.getTime())));
+  const overall = period === "overall";
+  const timelineStart = overall ? new Date(Date.UTC(firstEvent.getUTCFullYear(), firstEvent.getUTCMonth(), firstEvent.getUTCDate())) : selectedStart;
+  const timelineEnd = overall ? new Date(Date.UTC(lastEvent.getUTCFullYear(), lastEvent.getUTCMonth(), lastEvent.getUTCDate() + 1)) : selectedEnd;
+  const days = Math.ceil((timelineEnd.getTime() - timelineStart.getTime()) / 86_400_000);
+  const daily = period === "day" || period === "month" || period === "custom" || (overall && days <= 90);
+  const buckets = new Map<string, { label: string; revenue: number; expense: number }>();
+  const keyFor = (date: Date) => daily ? date.toISOString().slice(0, 10) : date.toISOString().slice(0, 7);
+  const labelFor = (date: Date) => daily ? date.toLocaleDateString("en", { month: "short", day: "numeric", timeZone: "UTC" }) : `${monthNames[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+  const cursor = new Date(timelineStart);
+  while (cursor < timelineEnd) {
+    const key = keyFor(cursor);
+    buckets.set(key, { label: labelFor(cursor), revenue: 0, expense: 0 });
+    if (daily) cursor.setUTCDate(cursor.getUTCDate() + 1); else cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  revenueEvents.forEach((event) => { const bucket = buckets.get(keyFor(event.date)); if (bucket) bucket.revenue += event.value; });
+  expenseEvents.forEach((event) => { const bucket = buckets.get(keyFor(event.date)); if (bucket) bucket.expense += event.value; });
+  return Array.from(buckets.values());
 }
 
 function formatCategory(value: string) {
@@ -45,19 +59,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ message: "Invalid period" }, { status: 400 });
   }
 
-  // Overall uses an unbounded KPI range, but the timeline must still be based
-  // on real calendar months. Anchoring it to today avoids a 9999-date range.
-  const timeline = sixMonthRange(resolved.period === "overall" ? new Date() : end);
   const userWhere = ownedByUserOrAdmin(session);
   const dateRange = { gte: start, lt: end };
-  const sixMonthDateRange = { gte: timeline.start, lt: resolved.period === "overall" ? new Date() : end };
 
   const [
     wonDeals,
     monthDeals,
-    sixMonthDeals,
     monthExpenses,
-    sixMonthExpenses,
     marketingMetrics,
     customers,
     products,
@@ -72,18 +80,9 @@ export async function GET(req: NextRequest) {
       include: { customer: true, items: true },
       orderBy: { updatedAt: "desc" },
     }),
-    prisma.deal.findMany({
-      where: { ...userWhere, ...notDeleted, OR: [{ wonAt: sixMonthDateRange }, { wonAt: null, createdAt: sixMonthDateRange }, { createdAt: sixMonthDateRange }] },
-      include: { items: true },
-      orderBy: { createdAt: "asc" },
-    }),
     prisma.expense.findMany({
       where: { ...userWhere, ...notDeleted, expenseDate: dateRange },
       orderBy: { expenseDate: "desc" },
-    }),
-    prisma.expense.findMany({
-      where: { ...userWhere, ...notDeleted, expenseDate: sixMonthDateRange },
-      orderBy: { expenseDate: "asc" },
     }),
     prisma.marketingMetric.findMany({
       where: { ...userWhere, ...notDeleted, metricDate: dateRange },
@@ -105,17 +104,13 @@ export async function GET(req: NextRequest) {
   const pendingDeliveries = monthDeals.filter((deal) => deal.fulfillmentStatus === "PENDING" || deal.fulfillmentStatus === "PROCESSING").length;
   const pipelineDeals = monthDeals.filter((deal) => deal.stage !== "WON" && deal.stage !== "LOST").length;
 
-  const monthlyTimeline = timeline.labels.map((label) => ({ label, revenue: 0, expense: 0 }));
-  sixMonthDeals.forEach((deal) => {
-    if (deal.stage !== "WON") return;
-    const date = deal.wonAt ?? deal.createdAt;
-    const index = timelineIndex(date, timeline.start);
-    if (monthlyTimeline[index]) monthlyTimeline[index].revenue += dealTotal(deal);
-  });
-  sixMonthExpenses.forEach((item) => {
-    const index = timelineIndex(item.expenseDate, timeline.start);
-    if (monthlyTimeline[index]) monthlyTimeline[index].expense += item.amount;
-  });
+  const monthlyTimeline = buildFinanceTimeline(
+    resolved.period,
+    start,
+    end,
+    wonDeals.map((deal) => ({ date: deal.wonAt ?? deal.createdAt, value: dealTotal(deal) })),
+    monthExpenses.map((item) => ({ date: item.expenseDate, value: item.amount })),
+  );
 
   const expenseTotals = new Map<string, number>();
   monthExpenses.forEach((item) => expenseTotals.set(item.category, (expenseTotals.get(item.category) ?? 0) + item.amount));
