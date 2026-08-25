@@ -1,397 +1,353 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
-import { ownedByUserOrAdmin, senderOwnedByUserOrAdmin, uploadedByUserOrAdmin } from "@/lib/tenant-scope";
-import { GoogleGenAI } from "@google/genai";
+import { customerOwnedByUserOrAdmin, ownedByUserOrAdmin } from "@/lib/tenant-scope";
+import { elapsedRatio, parsePeriodParams, resolvePeriodRange } from "@/lib/period-range";
 import { NextRequest, NextResponse } from "next/server";
 
-async function generateContentWithRetry(
-  genAI: GoogleGenAI,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  options: { model: string; contents: string | any[] },
-  maxRetries = 3,
-  delayMs = 1500
-): Promise<{ text?: string }> {
-  let lastError: unknown = null;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      const response = await (genAI.models.generateContent(options) as Promise<{ text?: string }>);
-      return response;
-    } catch (err) {
-      lastError = err;
-      const errStr = typeof err === "object" && err !== null ? JSON.stringify(err) : String(err);
-      if (
-        errStr.includes("503") ||
-        errStr.includes("429") ||
-        errStr.toLowerCase().includes("unavailable") ||
-        errStr.toLowerCase().includes("high demand") ||
-        errStr.toLowerCase().includes("overloaded") ||
-        errStr.toLowerCase().includes("fetch failed")
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs * Math.pow(2, i)));
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastError;
-}
-
-export type ActionRecommendation = {
-  area: "marketing" | "sales" | "appointments" | "general";
+export type CommerceActionRecommendation = {
+  area: "sales" | "finance" | "inventory" | "marketing" | "general";
   severity: "urgent" | "warning" | "info";
   title: string;
   insight: string;
   action: string;
   actionType:
-    | "view_quoted_deals"
-    | "view_pending_deals"
-    | "view_all_deals"
-    | "view_overdue_followups"
-    | "view_due_followups"
-    | "view_missing_phone"
-    | "set_target_modal"
+    | "view_sales"
     | "view_finance"
+    | "view_inventory"
+    | "view_marketing"
+    | "set_target_modal"
     | "general_dashboard";
 };
 
-// Heuristic fallback — always runs when Gemini is unavailable (Burmese output)
-function buildHeuristicRecommendations(data: {
-  highPriority: number;
-  missingPhone: number;
-  overdue: number;
-  dueToday: number;
-  closedDeals: number;
-  pendingDeals: number;
-  quotedDeals: number;
-  newLeads: number;
-  appointmentsMade: number;
-  appointmentsKept: number;
-  callsMade: number;
-  totalSalesAmount: number;
-  targetSalesAmount: number | null;
-  elapsedRatio: number;
-  }): ActionRecommendation[] {
-  const recs: ActionRecommendation[] = [];
+function formatMmk(value: number) {
+  return Math.round(value).toLocaleString();
+}
 
-  // Revenue pacing check
-  if (data.targetSalesAmount && data.elapsedRatio > 0.3) {
-    const expectedRevenue = data.targetSalesAmount * data.elapsedRatio;
-    const gap = expectedRevenue - data.totalSalesAmount;
+// Pure code-based heuristics (no Gemini) — Burmese output, same philosophy as
+// BAI-service's buildHeuristicRecommendations but over Commerce data.
+function buildRecommendations(data: {
+  revenue: number;
+  salesTarget: number;
+  expense: number;
+  expenseTarget: number;
+  ordersReceived: number;
+  ordersFulfilled: number;
+  outOfStockCount: number;
+  outOfStockNames: string[];
+  lowStockCount: number;
+  overdueFollowUps: number;
+  dueTodayFollowUps: number;
+  stuckDeals: number;
+  missingPhoneCustomers: number;
+  adSpend: number;
+  adOrders: number;
+  targetConfigured: boolean;
+  periodStart: Date;
+  periodEnd: Date;
+}): CommerceActionRecommendation[] {
+  const recs: CommerceActionRecommendation[] = [];
+  const ratio = elapsedRatio(data.periodStart, data.periodEnd);
+
+  // ─── Revenue pacing vs target ──────────────────────────────────────────────
+  if (data.targetConfigured && data.salesTarget > 0 && ratio > 0.15) {
+    const expectedRevenue = data.salesTarget * ratio;
+    const gap = expectedRevenue - data.revenue;
     if (gap > 0) {
-      const pct = Math.round((data.totalSalesAmount / expectedRevenue) * 100);
+      const pct = Math.round((data.revenue / expectedRevenue) * 100);
       recs.push({
         area: "sales",
         severity: pct < 60 ? "urgent" : "warning",
-        title: "အရောင်းဝင်ငွေ နှောင့်နှေးနေသည်",
-        insight: `ဝင်ငွေသည် မျှော်မှန်းထားသောနှုန်း၏ ${pct}% သာရှိသေးသည်။ ${Math.round(gap).toLocaleString()} Ks ကွာဟချက် ပြည့်မီရန် လိုနေသည်။`,
-        action: "ဤကာလအတွင်း High-Potential Lead တွေနဲ့ Pending Deal တွေကို Sales Team ကို အာရုံစိုက်ပြီး ပိတ်ရန် အလျင်အမြန်ဆောင်ရွက်ပါ။",
-        actionType: "view_all_deals",
+        title: "အရောင်းဝင်ငွေ ပစ်မှတ်နဲ့အထိ မရောက်သေးပါ",
+        insight: `ဒီကာလရဲ့ မျှော်မှန်းဝင်ငွေထက် ${pct}% သာ ရရှိထားပါသည်။ ${formatMmk(gap)} MMK ကွာဟချက် ဖြည့်ရန် လိုအပ်နေပါသည်။`,
+        action: "Pending / Quoted Deal များကို ဦးစားပေးပိတ်နိုင်ရန် Sales Team ကို အာရုံစိုက်ခိုင်းပါ။",
+        actionType: "view_sales",
       });
     }
   }
 
-  // High-priority leads not being followed up
-  if (data.highPriority > 5) {
+  // ─── Expense overrun ───────────────────────────────────────────────────────
+  if (data.expenseTarget > 0 && data.expense > data.expenseTarget * Math.max(ratio, 0.5)) {
+    const overPct = Math.round(((data.expense - data.expenseTarget * ratio) / (data.expenseTarget * ratio || 1)) * 100);
     recs.push({
-      area: "sales",
-      severity: "urgent",
-      title: `High-Potential Lead ${data.highPriority} ခု အာရုံစိုက်ရန် လိုသည်`,
-      insight: `ဦးစားပေးရမည့် Open Lead ${data.highPriority} ခု ရှိနေသည်။ နောက်ကျလေ Close Rate ကျလေ ဖြစ်သည်။`,
-      action: "ယနေ့ပင် High-Priority Lead တွေကို Sales Rep တွေ တာဝန်ပေးပြီး Demand Sheet မှာ ရလဒ်မှတ်ပါ။",
-      actionType: "view_all_deals",
-    });
-  }
-
-  // Missing phone numbers → marketing quality
-  if (data.missingPhone > 3) {
-    recs.push({
-      area: "marketing",
-      severity: "warning",
-      title: "Lead ဖမ်းဆည်းမှု အရည်အသွေး တိုးတက်ရန် လိုသည်",
-      insight: `ဖုန်းနံပါတ် မပါသော Open Lead ${data.missingPhone} ခု ရှိသဖြင့် ဆက်သွယ်မရနိုင်ပါ။`,
-      action: "Marketing Team ကို Lead ကို Sales သို့ မပို့မီ ဖုန်းနံပါတ် ရယူရန် တာဝန်ပေးပါ။",
-      actionType: "view_missing_phone",
-    });
-  }
-
-  // Overdue follow-ups
-  if (data.overdue > 0) {
-    recs.push({
-      area: "sales",
-      severity: "urgent",
-      title: `Follow-up ${data.overdue} ခု သက်တမ်းကျော်နေပြီ`,
-      insight: "သက်တမ်းကျော် Follow-up ရှိနေခြင်းသည် Lead လက်ဆင့်ကမ်းမှုတွင် ချို့ယွင်းနေကြောင်း ညွှန်ပြသည်။",
-      action: "သက်တမ်းကျော်နေသော List ကို အရင်ဆုံး ဆောင်ရွက်ပြီး ဖုန်းဆက်ပြီးတိုင်း Status အပ်ဒိတ်ပါ။",
-      actionType: "view_overdue_followups",
-    });
-  } else if (data.dueToday > 0) {
-    recs.push({
-      area: "sales",
-      severity: "warning",
-      title: `ယနေ့ Follow-up လုပ်ရမည့်အရာ ${data.dueToday} ခု ရှိသည်`,
-      insight: "ယနေ့ Follow-up တွေ Dashboard မှာ ရှိနေသည်။ ညနေမရောက်မီ ဆောင်ရွက်ပါ။",
-      action: "ယနေ့ Follow-up ဖုန်းဆက်မှုများ ပြီးဆုံးပြီး ရလဒ်ကို Record တစ်ခုချင်းမှာ မှတ်တမ်းတင်ပါ။",
-      actionType: "view_due_followups",
-    });
-  }
-
-  // Low appointment show rate
-  if (data.appointmentsMade > 0 && data.appointmentsKept < data.appointmentsMade * 0.5) {
-    const showRate = Math.round((data.appointmentsKept / data.appointmentsMade) * 100);
-    recs.push({
-      area: "appointments",
-      severity: showRate < 30 ? "urgent" : "warning",
-      title: "Appointment လာရောက်နှုန်း နည်းနေသည်",
-      insight: `Appointment ${data.appointmentsMade} ခုထဲမှ ${data.appointmentsKept} ခုသာ လာရောက်သည် (${showRate}%)။ Lead အရည်အသွေး ညံ့နေနိုင်သည်။`,
-      action: "Lead Source ကို ပြန်စစ်ပြီး Appointment မချိန်းမီ Lead Qualify ကို ပိုတင်းကျပ်စွာ လုပ်ပါ။",
+      area: "finance",
+      severity: data.expense > data.expenseTarget ? "urgent" : "warning",
+      title: "အသုံးစရိတ် မြန်မြန်ဆန်ဆန် တိုးလာနေပါသည်",
+      insight: `ကာလအတွင်း အသုံးစရိတ်သည် ဘတ်ဂျက်နှုန်းထက် ${overPct > 0 ? `${overPct}% ပို` : "မျှတ"}နေပါသည်။ စုစုပေါင်း ${formatMmk(data.expense)} MMK ထွက်နေပြီး ဘတ်ဂျက် ${formatMmk(data.expenseTarget)} MMK ဖြစ်သည်။`,
+      action: "အကြီးမားဆုံး အသုံးစရိတ် Category များကို ပြန်သုံးသပ်ပြီး လျှော့ချနိုင်သည့်အပိုင်းများ ရှာပါ။",
       actionType: "view_finance",
     });
   }
 
-  // Low new leads from marketing
-  if (data.callsMade > 0 && data.newLeads < data.callsMade * 0.1) {
+  // ─── Out of stock products ────────────────────────────────────────────────
+  if (data.outOfStockCount > 0) {
+    recs.push({
+      area: "inventory",
+      severity: "urgent",
+      title: `ပစ္စည်း ${data.outOfStockCount} မျိုး ပြတ်သွင်းနေရခြင်း`,
+      insight: `${data.outOfStockNames.slice(0, 3).join("၊ ")}${data.outOfStockNames.length > 3 ? " အစရှိသည့်" : ""} ပစ္စည်းများ လုံးဝပြတ်နေပြီး ရောင်းလို့မရနိုင်တော့ပါ။`,
+      action: "Supplier များနှင့် ဆက်သွယ်ပြီး အမြန်ဆုံး ပြန်သွင်းရန် စီစဉ်ပါ။",
+      actionType: "view_inventory",
+    });
+  } else if (data.lowStockCount > 0) {
+    recs.push({
+      area: "inventory",
+      severity: "warning",
+      title: `Low Stock ပစ္စည်း ${data.lowStockCount} မျိုး ရှိနေပါသည်`,
+      insight: "အနည်းဆုံး ပမာဏထက် နိမ့်နေသော ပစ္စည်းများ ရှိနေသဖြင့် နောက်မှာယူမှုများ ပြတ်လပ်မစေရန် ကြိုတင်စီစဉ်သင့်ပါသည်။",
+      action: "Inventory စာမျက်နှာမှ Low Stock စာရင်းကို စစ်ဆေးပါ။",
+      actionType: "view_inventory",
+    });
+  }
+
+  // ─── Overdue follow-ups ───────────────────────────────────────────────────
+  if (data.overdueFollowUps > 0) {
+    recs.push({
+      area: "sales",
+      severity: "urgent",
+      title: `Follow-up ${data.overdueFollowUps} ခု သက်တမ်းကျော်နေပြီ`,
+      insight: "သက်တမ်းကျော် Follow-up များ ရှိနေခြင်းသည် Customer ဆုံးရှုံးမှုသို့ ဦးတည်နေကြောင်း ညွှန်ပြပါသည်။",
+      action: "သက်တမ်းကျော်နေသော Customer များကို အရင်ဆုံး ဖုန်းဆက်ပြီး Status အပ်ဒိတ်လုပ်ပါ။",
+      actionType: "view_sales",
+    });
+  } else if (data.dueTodayFollowUps > 0) {
+    recs.push({
+      area: "sales",
+      severity: "warning",
+      title: `ယနေ့ Follow-up လုပ်ရမည့် Customer ${data.dueTodayFollowUps} ဦး ရှိသည်`,
+      insight: "ယနေ့လုပ်ရမည့် Follow-up များကို ညနေမရောက်မီ ဆောင်ရွက်ပြီးပါက Conversion ပိုမြင့်ပါလိမ့်မည်။",
+      action: "ယနေ့ Follow-up ဖုန်းဆက်မှုများ ပြီးဆုံးပြီး ရလဒ်များကို မှတ်တမ်းတင်ပါ။",
+      actionType: "view_sales",
+    });
+  }
+
+  // ─── Deals stuck too long in pipeline ─────────────────────────────────────
+  if (data.stuckDeals > 0) {
+    recs.push({
+      area: "sales",
+      severity: "warning",
+      title: `Deal ${data.stuckDeals} ခု ရက်ပေါင်းများစွာ ရပ်တည်နေပါသည်`,
+      insight: "၇ ရက်ထက် ကြာနေသော Open Deal များသည် ဆက်လက်စောင့်ဆိုင်းပါက Close ဖြစ်နိုင်ခြေ နိမ့်လာပါသည်။",
+      action: "Deal တစ်ခုချင်းစီ၏ နောက်ထပ်လုပ်ဆောင်ချက် (Next Action) ကို သတ်မှတ်ပေးပါ။",
+      actionType: "view_sales",
+    });
+  }
+
+  // ─── Orders fulfilled lagging received ────────────────────────────────────
+  if (data.ordersReceived > 0 && data.ordersFulfilled < data.ordersReceived) {
+    const pending = data.ordersReceived - data.ordersFulfilled;
+    recs.push({
+      area: "general",
+      severity: pending > 10 ? "urgent" : "warning",
+      title: `Order ${pending} ခု ပို့ဆောင်ရေး စောင့်နေပါသည်`,
+      insight: `Order လက်ခံရရှိမှု ${data.ordersReceived} ခုထဲမှ ${data.ordersFulfilled} ခုသာ Fulfilled ဖြစ်ပါသည်။ Delivery နှောင့်နှေးပါက Review Request များ ကျဆင်းနိုင်ပါသည်။`,
+      action: "Pending delivery queue ကို စစ်ဆေးပြီး Dispatch လုပ်ဆောင်ချက်များ ချထားပေးပါ။",
+      actionType: "view_sales",
+    });
+  }
+
+  // ─── Ad spend without measurable orders ───────────────────────────────────
+  if (data.adSpend > 0 && data.adOrders === 0) {
+    recs.push({
+      area: "marketing",
+      severity: "warning",
+      title: "ကြော်ငြာစရိတ် အသုံးဝင်မှု မတိုင်းတာနိုင်ပါ",
+      insight: `${formatMmk(data.adSpend)} MMK အသုံးစရိတ် ထွက်နေချိန်တွင် Ad-driven Order မျှတမှတ်တမ်းတင်ထားခြင်း မရှိပါ။`,
+      action: "Campaign တစ်ခုချင်းစီ၏ ရလဒ်ကို ပြန်စစ်ပြီး Ad-driven Orders ကို မှန်ကန်စွာ မှတ်ပါ။",
+      actionType: "view_marketing",
+    });
+  }
+
+  // ─── Missing phone numbers on customers ───────────────────────────────────
+  if (data.missingPhoneCustomers > 3) {
     recs.push({
       area: "marketing",
       severity: "info",
-      title: "Lead ထုတ်လုပ်နှုန်း နည်းနေသည်",
-      insight: `ဖုန်းဆက် ${data.callsMade} ကြိမ်မှ New Lead ${data.newLeads} ခုသာ ရသည်။ Targeting ပြန်ပြင်ရန် လိုနိုင်သည်။`,
-      action: "Outreach Lead အရည်အသွေး တိုးတက်ရန် Channel ကိုပြောင်း သို့မဟုတ် Message Angle အသစ် စမ်းကြည့်ပါ။",
-      actionType: "view_finance",
+      title: "Customer Data အရည်အသွေး တိုးတက်ရန် လိုသည်",
+      insight: `ဖုန်းနံပါတ် မပါသော Customer ${data.missingPhoneCustomers} ဦး ရှိနေသဖြင့် ဆက်သွယ်မှုနှင့် Follow-up လုပ်ရန် ခက်ခဲနိုင်ပါသည်။`,
+      action: "Sales သို့ မရောက်မီ ဖုန်းနံပါတ် ဖမ်းယူရန် Team ကို တာဝန်ပေးပါ။",
+      actionType: "view_marketing",
     });
   }
 
-  // Healthy fallback
+  // ─── Healthy fallback ─────────────────────────────────────────────────────
   if (recs.length === 0) {
     recs.push({
       area: "general",
       severity: "info",
-      title: "လုပ်ငန်းလည်ပတ်မှု ကောင်းနေသည်",
-      insight: "လက်ရှိ Data များအရ အရေးပေါ် Bottleneck မတွေ့ရပါ။",
-      action: "Demand Data ဆက်တင်သွင်းပြီး Follow-up တိုင်းတွင် ရက်ချိန်း သတ်မှတ်ထားရန် သေချာပါ။",
+      title: "လုပ်ငန်းလည်ပတ်မှု ကောင်းမွန်နေပါသည်",
+      insight: "လက်ရှိ Data များအရ အရေးပေါ် Bottleneck မတွေ့ရပါ။ ရောင်းအား၊ ကုန်ပစ္စည်းနှင့် ကြော်ငြာတို့ ဟန်ချက်ညီနေပါသည်။",
+      action: "Data မှတ်တမ်းတင်မှုကို ဆက်လက်ထိန်းသိမ်းပြီး နေ့စဉ် Follow-up ရက်စွဲများ သတ်မှတ်ထားပါ။",
       actionType: "general_dashboard",
     });
   }
 
-  return recs;
+  // ─── Defaults so there are always up to 4 cards ───────────────────────────
+  const defaults: CommerceActionRecommendation[] = [
+    {
+      area: "finance",
+      severity: data.targetConfigured ? "info" : "warning",
+      title: data.targetConfigured ? "ဝင်ငွေ/အသုံးစရိတ် ပစ်မှတ်ကို နေ့စဉ်စောင့်ကြည့်ပါ" : "ပစ်မှတ် သတ်မှတ်ရန် လိုအပ်နေပါသည်",
+      insight: data.targetConfigured
+        ? `လက်ရှိဝင်ငွေ ${formatMmk(data.revenue)} MMK ကို ပစ်မှတ်နှင့် နှိုင်းယှဉ်ကြည့်ပြီး Sales လုပ်ဆောင်ချက်ကို ချိန်ညှိပါ။`
+        : "ဝင်ငွေနှင့် အသုံးစရိတ် ပစ်မှတ်များ သတ်မှတ်ထားမှ လုပ်ငန်းစွမ်းဆောင်ရည်ကို တိုင်းတာနိုင်မည်ဖြစ်သည်။",
+      action: data.targetConfigured ? "Finance Dashboard တွင် ကြည့်ရန်" : "Set Targets နှိပ်၍ ပစ်မှတ်သတ်မှတ်ရန်",
+      actionType: data.targetConfigured ? "view_finance" : "set_target_modal",
+    },
+    {
+      area: "inventory",
+      severity: "info",
+      title: "ကုန်ပစ္စည်း အခြေအနေကို ဆက်လက်စောင့်ကြည့်ပါ",
+      insight: data.outOfStockCount === 0 && data.lowStockCount === 0
+        ? "Stock အခြေအနေ ကောင်းမွန်နေပါသည်။ ရောင်းအားကောင်းသော ပစ္စည်းများကို ကြိုတင်ဖြည့်ထားပါ။"
+        : "ပြတ်သွင်းနေသော ပစ္စည်းများကို ဦးစားပေး ပြန်သွင်းပါ။",
+      action: "Inventory စစ်ဆေးရန်",
+      actionType: "view_inventory",
+    },
+  ];
+  for (const fallback of defaults) {
+    if (recs.length >= 4) break;
+    if (!recs.some((rec) => rec.actionType === fallback.actionType && rec.area === fallback.area)) {
+      recs.push(fallback);
+    }
+  }
+
+  return recs.slice(0, 4);
 }
 
-// GET /api/dashboard/action-recommendations
+type HeuristicInput = Parameters<typeof buildRecommendations>[0];
+
+// GET /api/dashboard/action-recommendations?period=...&year=...&month=...&day=...&from=...&to=...
 export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const now = new Date();
-  const nowMyanmar = new Date(Date.now() + 6.5 * 60 * 60 * 1000);
-  const { searchParams } = req.nextUrl;
-  const period = searchParams.get("period") === "year" ? "year" : "month";
-  const monthParam = Number(searchParams.get("month") || nowMyanmar.getUTCMonth() + 1);
-  const yearParam = Number(searchParams.get("year") || nowMyanmar.getUTCFullYear());
-  const month = Math.min(12, Math.max(1, Number.isFinite(monthParam) ? monthParam : nowMyanmar.getUTCMonth() + 1));
-  const year = Number.isFinite(yearParam) ? yearParam : nowMyanmar.getUTCFullYear();
-  const periodStart = period === "year" ? new Date(Date.UTC(year, 0, 1)) : new Date(Date.UTC(year, month - 1, 1));
-  const periodEnd = period === "year" ? new Date(Date.UTC(year + 1, 0, 1)) : new Date(Date.UTC(year, month, 1));
-  const startOfToday = new Date(Date.UTC(nowMyanmar.getUTCFullYear(), nowMyanmar.getUTCMonth(), nowMyanmar.getUTCDate()));
-  const senderScope = senderOwnedByUserOrAdmin(session);
-  const uploadedScope = uploadedByUserOrAdmin(session);
-  const ownerScope = ownedByUserOrAdmin(session);
-  const demandScope = { ...senderScope, ...notDeleted };
-  const activeUploadedScope = { ...uploadedScope, ...notDeleted };
+  const resolved = parsePeriodParams(req.nextUrl.searchParams);
+  const periodRange = resolvePeriodRange(resolved);
+  const { start, end } = periodRange;
+  const userWhere = ownedByUserOrAdmin(session);
+  const dateRange = { gte: start, lt: end };
+  const startOfTodayMyanmar = new Date(Date.UTC(
+    new Date(Date.now() + 6.5 * 60 * 60 * 1000).getUTCFullYear(),
+    new Date(Date.now() + 6.5 * 60 * 60 * 1000).getUTCMonth(),
+    new Date(Date.now() + 6.5 * 60 * 60 * 1000).getUTCDate(),
+  ));
+  const endOfToday = new Date(startOfTodayMyanmar.getTime() + 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   try {
     const [
-      settings,
-      highPriorityCount,
-      missingPhoneCount,
-      overdueCount,
-      dueTodayCount,
-      dbClosedCount,
-      dbQuotedCount,
-      dbPendingCount,
-      businessAgg,
-      demandAgg,
-      latestTargets,
+      monthTarget,
+      yearTarget,
+      wonDeals,
+      expenses,
+      periodDeals,
+      fulfilledOrders,
+      outOfStockProducts,
+      lowStockCount,
+      overdueFollowUps,
+      dueTodayFollowUps,
+      stuckDealCount,
+      missingPhoneCustomers,
+      marketingAgg,
     ] = await Promise.all([
-      prisma.botSettings.findFirst({ where: { isActive: true, ...ownerScope }, select: { geminiApiKey: true, geminiModel: true } }),
-      // Scoped to the selected period so May data doesn't bleed into June view
-      prisma.demandRecord.count({
-        where: {
-          priority: "high",
-          ...demandScope,
-          status: { notIn: ["closed", "completed"] },
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.demandRecord.count({
-        where: {
-          missingFields: { has: "phone" },
-          ...demandScope,
-          status: { notIn: ["closed", "completed"] },
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.demandRecord.count({
-        where: {
-          followUpStatus: "overdue",
-          ...demandScope,
-          status: { notIn: ["closed", "completed"] },
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.demandRecord.count({
-        where: {
-          followUpDate: { gte: startOfToday, lt: new Date(startOfToday.getTime() + 86400000) },
-          ...demandScope,
-          status: { notIn: ["closed", "completed"] },
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.demandRecord.count({
-        where: {
-          status: "closed",
-          ...demandScope,
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.demandRecord.count({
-        where: {
-          status: "quoted",
-          ...demandScope,
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.demandRecord.count({
-        where: {
-          status: "pending",
-          ...demandScope,
-          createdAt: { gte: periodStart, lt: periodEnd },
-        },
-      }),
-      prisma.businessReport.aggregate({
-        _sum: {
-          totalSalesAmount: true,
-          callsMade: true,
-          appointmentsMade: true,
-          appointmentsKept: true,
-          newLeads: true,
-          closedDeals: true,
-          pendingDeals: true,
-        },
-        where: { reportDate: { gte: periodStart, lt: periodEnd }, ...activeUploadedScope },
-      }),
-      prisma.demandRecord.aggregate({
-        _sum: { serviceAmount: true },
-        where: { createdAt: { gte: periodStart, lt: periodEnd }, ...demandScope },
+      prisma.periodTarget.findFirst({
+        where: { userId: session.user.id, period: "month", year: start.getUTCFullYear(), month: start.getUTCMonth() + 1 },
       }),
       prisma.periodTarget.findFirst({
+        where: { userId: session.user.id, period: "year", year: resolved.year, month: 0 },
+      }),
+      prisma.deal.findMany({
+        where: { ...userWhere, ...notDeleted, stage: "WON", OR: [{ wonAt: dateRange }, { wonAt: null, createdAt: dateRange }] },
+        include: { items: true },
+      }),
+      prisma.expense.aggregate({
+        where: { ...userWhere, ...notDeleted, expenseDate: dateRange },
+        _sum: { amount: true },
+      }),
+      prisma.deal.count({
+        where: { ...userWhere, ...notDeleted, createdAt: dateRange },
+      }),
+      prisma.deal.count({
+        where: { ...userWhere, ...notDeleted, fulfillmentStatus: "FULFILLED", updatedAt: dateRange },
+      }),
+      prisma.product.findMany({
+        where: { ...userWhere, ...notDeleted, stockQty: { lte: 0 } },
+        select: { name: true },
+        take: 10,
+      }),
+      prisma.product.count({
+        where: { ...userWhere, ...notDeleted, stockQty: { gt: 0 } },
+      }),
+      prisma.followUpNote.count({
         where: {
-          period,
-          year,
-          month: period === "year" ? 0 : month,
-          ...ownerScope,
+          status: "DRAFT",
+          suggestedFollowUpDate: { lt: startOfTodayMyanmar },
+          deal: { ...userWhere, ...notDeleted },
         },
+      }),
+      prisma.followUpNote.count({
+        where: {
+          status: "DRAFT",
+          suggestedFollowUpDate: { gte: startOfTodayMyanmar, lt: endOfToday },
+          deal: { ...userWhere, ...notDeleted },
+        },
+      }),
+      prisma.deal.count({
+        where: {
+          ...userWhere,
+          ...notDeleted,
+          stage: { in: ["NEW_LEAD", "QUOTED", "FOLLOW_UP_NEEDED", "PENDING"] },
+          createdAt: { lt: sevenDaysAgo },
+        },
+      }),
+      prisma.customer.count({
+        where: {
+          ...customerOwnedByUserOrAdmin(session),
+          ...notDeleted,
+          phone: null,
+          createdAt: dateRange,
+        },
+      }),
+      prisma.marketingMetric.aggregate({
+        where: { ...userWhere, ...notDeleted, metricDate: dateRange },
+        _sum: { spend: true, adDrivenOrders: true },
       }),
     ]);
 
-    const msPerDay = 24 * 60 * 60 * 1000;
-    const totalDaysInPeriod = Math.round((periodEnd.getTime() - periodStart.getTime()) / msPerDay);
-    let elapsedDays = totalDaysInPeriod;
-    if (now >= periodStart && now < periodEnd) {
-      elapsedDays = Math.floor((startOfToday.getTime() - periodStart.getTime()) / msPerDay) + 1;
-    } else if (periodStart > now) {
-      elapsedDays = 0;
-    }
-    const elapsedRatio = totalDaysInPeriod > 0 ? elapsedDays / totalDaysInPeriod : 0;
-    const periodLabel = period === "year" ? `${year}` : `${month}/${year}`;
-    const targetLabel = period === "year" ? "ကာလပစ်မှတ်" : "လစဉ် အရောင်းပစ်မှတ်";
-
-    const totalSalesAmount = (businessAgg._sum.totalSalesAmount ?? 0) + (demandAgg._sum.serviceAmount ?? 0);
-
-    const inputData = {
-      highPriority: highPriorityCount,
-      missingPhone: missingPhoneCount,
-      overdue: overdueCount,
-      dueToday: dueTodayCount,
-      closedDeals: dbClosedCount,
-      quotedDeals: dbQuotedCount,
-      pendingDeals: dbPendingCount,
-      newLeads: businessAgg._sum.newLeads ?? 0,
-      appointmentsMade: businessAgg._sum.appointmentsMade ?? 0,
-      appointmentsKept: businessAgg._sum.appointmentsKept ?? 0,
-      callsMade: businessAgg._sum.callsMade ?? 0,
-      totalSalesAmount,
-      targetSalesAmount: latestTargets?.targetSalesAmount ?? null,
-      elapsedRatio,
+    const targets = monthTarget ?? yearTarget ?? undefined;
+    const dealRevenue = (deal: { quotedAmount: number | null; items: { quantity: number; unitPrice: number }[] }) => {
+      const itemTotal = deal.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+      return itemTotal || deal.quotedAmount || 0;
     };
 
-    if (!settings?.geminiApiKey) {
-      return NextResponse.json({ recommendations: buildHeuristicRecommendations(inputData) });
-    }
+    const inputData: HeuristicInput = {
+      revenue: wonDeals.reduce((sum, deal) => sum + dealRevenue(deal), 0),
+      salesTarget: targets?.targetSalesAmount ?? 30_000_000,
+      expense: expenses._sum.amount ?? 0,
+      expenseTarget: targets?.targetExpenseAmount ?? 11_000_000,
+      ordersReceived: periodDeals,
+      ordersFulfilled: fulfilledOrders,
+      outOfStockCount: outOfStockProducts.length,
+      outOfStockNames: outOfStockProducts.map((product) => product.name),
+      lowStockCount,
+      overdueFollowUps,
+      dueTodayFollowUps,
+      stuckDeals: stuckDealCount,
+      missingPhoneCustomers,
+      adSpend: marketingAgg._sum.spend ?? 0,
+      adOrders: marketingAgg._sum.adDrivenOrders ?? 0,
+      targetConfigured: Boolean(monthTarget ?? yearTarget),
+      periodStart: start,
+      periodEnd: end,
+    };
 
-    // Build Gemini prompt
-    const prompt = `သင်သည် မြန်မာနိုင်ငံ လုပ်ငန်းတစ်ခုအတွက် အတွေ့အကြုံရင့် Sales Operations Analyst တစ်ဦးဖြစ်သည်။ အောက်ဖော်ပြပါ real-time လုပ်ငန်းမက်ထရစ်တွေကို ခွဲခြမ်းစိတ်ဖြာပြီး ဆောင်ရွက်ရမည့်အကြံဉာဏ် ၂-၄ ခု ပေးပါ။
-
-လက်ရှိကာလ မက်ထရစ်များ (${period === "year" ? "နှစ်" : "လ"}: ${periodLabel}၊ ${elapsedDays}/${totalDaysInPeriod} ရက် ကုန်ဆုံးပြီ):
-- ဦးစားပေး Open Lead အရေအတွက်: ${inputData.highPriority}
-- ဖုန်းနံပါတ် မပါသော Open Lead: ${inputData.missingPhone}
-- သက်တမ်းကျော် Follow-up: ${inputData.overdue}
-- ယနေ့ Follow-up လုပ်ရမည့်အရေအတွက်: ${inputData.dueToday}
-- ဤကာလ ရောင်းရငွေ: ${inputData.totalSalesAmount.toLocaleString()} Ks
-- ${targetLabel}: ${inputData.targetSalesAmount ? inputData.targetSalesAmount.toLocaleString() + ' Ks' : 'မသတ်မှတ်ရသေးပါ'}
-- ဖုန်းဆက်မှုအရေအတွက်: ${inputData.callsMade}
-- Appointment ချိန်းဆိုမှု: ${inputData.appointmentsMade}
-- Appointment တကယ်လာရောက်မှု: ${inputData.appointmentsKept}
-- New Lead အရေအတွက်: ${inputData.newLeads}
-- အောင်မြင်စွာ ပိတ်သိမ်းပြီးသော Deal (Closed): ${inputData.closedDeals}
-- ဈေးနှုန်းကမ်းလှမ်းထားဆဲ Deal (Quoted): ${inputData.quotedDeals}
-- ဆိုင်းငံ့နေဆဲ Deal (Pending): ${inputData.pendingDeals}
-
-Bottleneck သည် ဘယ်နေရာမှာရှိသည်ကို ဖော်ထုတ်ပါ — Marketing (Lead ထုတ်လုပ်မှု/အရည်အသွေး)၊ Sales (Follow-up/Close Rate)၊ Appointments (လာရောက်နှုန်း/အရည်အသွေး) — ထဲမှ ဖော်ထုတ်ပြီး ဆောင်ရွက်ရမည့်အကြံဉာဏ်ပေးပါ။
-
-အရေးကြီး — "title"၊ "insight"၊ "action" ၃ ခုလုံးကို မြန်မာဘာသာ (Burmese) ဖြင့်သာ ရေးပါ။ ပြင်ပဆောင်ရွက်ချက် ရှိသမျှကိုလည်း မြန်မာဘာသာနဲ့ ဖော်ပြပါ။
-"actionType" ကတော့ အောက်ဖော်ပြပါ အင်္ဂလိပ်လို Enum တန်ဖိုးများထဲမှသာ ရွေးချယ်ပေးရမည်:
-- "set_target_modal": အရောင်းပစ်မှတ် သတ်မှတ်ရန် သို့မဟုတ် ပြင်ဆင်ရန် အကြံပြုပါက
-- "view_quoted_deals": ဈေးနှုန်းကမ်းလှမ်းထားသော (Quoted) Deal များအား ပိတ်သိမ်းရန် သို့မဟုတ် ဆက်သွယ်ရန် အကြံပြုပါက
-- "view_pending_deals": ဆိုင်းငံ့နေသော (Pending) Deal များအား ပိတ်သိမ်းရန် သို့မဟုတ် ဆက်သွယ်ရန် အကြံပြုပါက
-- "view_all_deals": Deal နှစ်မျိုးလုံး သို့မဟုတ် ယေဘုယျ အရောင်း Deal များနှင့် ပတ်သက်၍ အကြံပြုပါက
-- "view_overdue_followups": သက်တမ်းကျော်လွန်နေသော Follow-up များအား ဖြေရှင်းရန် အကြံပြုပါက
-- "view_due_followups": ယနေ့ လုပ်ဆောင်ရမည့် Follow-up များအား ဆောင်ရွက်ရန် အကြံပြုပါက
-- "view_missing_phone": ဖုန်းနံပါတ်မပါသော Open Lead များကို ဖုန်းနံပါတ် ပြန်တောင်းရန် အကြံပြုပါက
-- "view_finance": ဘဏ္ဍာရေး သို့မဟုတ် လုပ်ငန်း Bottlenecks များကို စစ်ဆေးရန် အကြံပြုပါက
-- "general_dashboard": ယေဘုယျ လုပ်ငန်းလည်ပတ်မှု ကောင်းမွန်သဖြင့် ပုံမှန်အတိုင်း ဆက်လုပ်ရန် အကြံပြုပါက
-
-JSON Array (markdown မပါ၊ ရှင်းလင်းချက် မပါ) ကိုသာ ထုတ်ပေးပါ:
-[
-  {
-    "area": "marketing" | "sales" | "appointments" | "general",
-    "severity": "urgent" | "warning" | "info",
-    "title": "မြန်မာဘာသာဖြင့် အကြောင်းအရာ အတိုချုပ် (စကားလုံး ၈ ခုအောက်)",
-    "insight": "ဘာဖြစ်နေသည်နှင့် ဘာကြောင့် အရေးကြီးသည် ကို မြန်မာဘာသာဖြင့် ၁-၂ ကြောင်း ရှင်းပြပါ",
-    "action": "Team အတွက် ဆောင်ရွက်ရမည့်အကြံဉာဏ်ကို မြန်မာဘာသာဖြင့် ၁ ကြောင်း ဖော်ပြပါ",
-    "actionType": "set_target_modal" | "view_quoted_deals" | "view_pending_deals" | "view_all_deals" | "view_overdue_followups" | "view_due_followups" | "view_missing_phone" | "view_finance" | "general_dashboard"
-  }
-]`;
-
-    const genAI = new GoogleGenAI({ apiKey: settings.geminiApiKey });
-    const modelName = settings.geminiModel || "gemini-3.1-flash-lite-preview";
-
-    const response = await generateContentWithRetry(genAI, { model: modelName, contents: prompt });
-    const responseText = response?.text;
-
-    if (!responseText) {
-      return NextResponse.json({ recommendations: buildHeuristicRecommendations(inputData) });
-    }
-
-    const cleaned = responseText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-
-    if (!Array.isArray(parsed)) throw new Error("Not an array");
-
-    return NextResponse.json({ recommendations: parsed as ActionRecommendation[] });
-  } catch (err) {
-    console.error("Action recommendations error:", err);
-    return NextResponse.json({ recommendations: [] });
+    const recommendations = buildRecommendations(inputData);
+    return NextResponse.json({ recommendations, source: "local" });
+  } catch (error) {
+    console.error("Commerce recommendations failed:", error);
+    return NextResponse.json({ message: "Unable to build recommendations" }, { status: 500 });
   }
 }
