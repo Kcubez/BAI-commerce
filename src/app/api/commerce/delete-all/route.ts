@@ -71,7 +71,28 @@ export async function DELETE(req: NextRequest) {
       }),
     ]);
     count = expenses.count + wonDeals.count + financeEntries.count;
-  } else {
+    return NextResponse.json({ success: true, count });
+  }
+
+  if (workspace === "customers") {
+    // Match BAI-service semantics: deleting customers also soft-deletes their
+    // purchase records so Trash can restore both together.
+    const where = { ...ownerScope, ...notDeleted };
+    const customerIds = (
+      await prisma.customer.findMany({ where, select: { id: true } })
+    ).map((customer) => customer.id);
+    const [deletedCustomers, deletedRecords] = await prisma.$transaction([
+      prisma.customer.updateMany({ where: { id: { in: customerIds } }, data }),
+      prisma.demandRecord.updateMany({
+        where: { customerId: { in: customerIds }, ...notDeleted },
+        data: softDeleteData(session.user.id, "Deleted along with customer"),
+      }),
+    ]);
+    count = deletedCustomers.count + deletedRecords.count;
+    return NextResponse.json({ success: true, count });
+  }
+
+  {
     const where = {
       ...ownerScope,
       ...notDeleted,
@@ -85,9 +106,7 @@ export async function DELETE(req: NextRequest) {
       ? await prisma.deal.updateMany({ where, data })
       : workspace === "marketing"
         ? await prisma.marketingMetric.updateMany({ where, data })
-        : workspace === "customers"
-          ? await prisma.customer.updateMany({ where, data })
-          : await prisma.product.updateMany({ where, data });
+        : await prisma.product.updateMany({ where, data });
     count = result.count;
   }
 

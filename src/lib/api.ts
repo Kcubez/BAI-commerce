@@ -283,6 +283,83 @@ export const commerceDashboardApi = {
   },
 };
 
+// ─── Commerce Customers (BAI-service Customer Service parity) ──────────────
+
+export type CommerceCustomerDirectoryRow = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  company: string | null;
+  status: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  purchaseCount: number;
+  amountPaid: number;
+  purchasedProduct: string | null;
+};
+
+export type CommerceCustomerDirectoryResponse = {
+  customers: CommerceCustomerDirectoryRow[];
+  total: number;
+  page: number;
+  totalPages: number;
+};
+
+export type CommerceCustomersListParams = CommerceDashboardParams & {
+  page?: number;
+  limit?: number;
+  search?: string;
+};
+
+export type CommerceCustomerStats = {
+  totalPurchaseRecords: number;
+  pendingPurchaseRecords: number;
+  purchaseCustomers: number;
+  avgSpendingValue: number;
+};
+
+export type CommerceCustomerMetric = {
+  id: string;
+  name: string;
+  company: string | null;
+  totalSpend: number;
+  lifetimeValue: number;
+  purchaseFrequency: number;
+  averageOrderValue: number;
+  lastPurchaseAt: string | null;
+  segment: "vip" | "frequent" | "at_risk" | "new" | "standard";
+};
+
+export type CommerceCustomerAnalytics = {
+  top20: CommerceCustomerMetric[];
+  bottom20: CommerceCustomerMetric[];
+  summary: {
+    totalCustomers: number;
+    top20AverageSpend: number;
+    bottom20AverageSpend: number;
+    averageLifetimeValue: number;
+    averagePurchaseFrequency: number;
+    atRiskCustomers: number;
+  };
+  recommendations: { tone: "success" | "warning" | "info"; title: string; message: string; action: string }[];
+};
+
+export const commerceCustomersApi = {
+  directory: (params: CommerceCustomersListParams = { period: "overall", year: 0, month: 0 }) => {
+    const searchParams = commercePeriodQuery(params);
+    if (params.page) searchParams.set("page", String(params.page));
+    if (params.limit) searchParams.set("limit", String(params.limit));
+    if (params.search) searchParams.set("search", params.search);
+    return request<CommerceCustomerDirectoryResponse>(`/api/commerce/customers?${searchParams.toString()}`);
+  },
+  stats: (params: CommerceDashboardParams) =>
+    request<CommerceCustomerStats>(`/api/commerce/customers/stats?${commercePeriodQuery(params).toString()}`),
+  analytics: (params: CommerceDashboardParams) =>
+    request<CommerceCustomerAnalytics>(`/api/commerce/customers/analytics?${commercePeriodQuery(params).toString()}`),
+};
+
 export type CommerceActionRecommendation = {
   area: "sales" | "finance" | "inventory" | "marketing" | "general";
   severity: "urgent" | "warning" | "info";
@@ -298,7 +375,7 @@ export type CommerceActionRecommendation = {
     | "general_dashboard";
 };
 
-function commercePeriodQuery(params: CommerceDashboardParams) {
+export function commercePeriodQuery(params: CommerceDashboardParams) {
   const searchParams = new URLSearchParams();
   searchParams.set("period", params.period);
   if (params.period !== "overall") {
