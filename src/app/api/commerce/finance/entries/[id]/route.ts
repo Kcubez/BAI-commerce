@@ -22,7 +22,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json();
   const result = await prisma.financeEntry.updateMany({
     where: { id, userId: session.user.id, ...notDeleted },
-    data: { title: String(body.title || "Finance record"), amount: Number(body.amount) || 0, accountingType: String(body.accountingType || "operating_expense"), status: String(body.status || "recorded"), counterparty: body.counterparty || null, dueDate: body.dueDate ? new Date(body.dueDate) : null, notes: body.notes || null },
+    data: {
+      entryDate: body.entryDate ? new Date(body.entryDate) : undefined,
+      title: String(body.title || "Finance record"),
+      amount: Number(body.amount) || 0,
+      cashType: body.cashType === "Income" ? "Income" : body.cashType === "Capital" ? "Capital" : "Expense",
+      accountingType: String(body.accountingType || "operating_expense"),
+      status: String(body.status || "recorded"),
+      counterparty: body.counterparty || null,
+      dueDate: body.dueDate ? new Date(body.dueDate) : null,
+      voucherNumber: body.voucherNumber || null,
+      notes: body.notes || null,
+    },
   });
   if (!result.count) return NextResponse.json({ message: "Finance record not found" }, { status: 404 });
   return NextResponse.json({ success: true });

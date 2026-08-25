@@ -344,7 +344,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
         title: foundFollowUp.title,
         message: foundFollowUp.message,
         recommendedAction: foundFollowUp.recommendedAction,
-        action: foundFollowUp.action,
+        action: 'Follow-up စစ်ရန်',
         actionType: foundFollowUp.actionType ?? 'view_overdue',
       }
     : {
@@ -353,7 +353,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
         title: 'Follow-up နောက်ဆက်တွဲ ဆက်သွယ်မှု',
         message: 'လတ်တလော လုပ်ဆောင်ရန်လိုအပ်သော follow-up နောက်ဆက်တွဲ ဖုန်းခေါ်ဆိုမှုများ မရှိသေးပါ။',
         recommendedAction: 'နောက်ဆက်တွဲ လုပ်ဆောင်ရန်မရှိသေးသည့် Leads များအတွက် follow-up ရက်စွဲများ သတ်မှတ်ပေးပါ။',
-        action: 'Follow-up စစ်ဆေးရန်',
+        action: 'Follow-up စစ်ရန်',
         actionType: 'view_overdue',
       };
 
@@ -370,7 +370,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
       atRiskCustomers > 0
         ? 'ပြန်လည်ဝယ်ယူမှုရရှိစေရန် Follow-up ဆက်သွယ်ပြီး သင့်တော်သော Offer ကို ပေးပို့ပါ။'
         : 'Customer ဝယ်ယူမှုနှုန်းနှင့် Lifetime Value ကို ဆက်လက်စောင့်ကြည့်ပါ။',
-    action: 'Customer စာရင်း စစ်ဆေးရန်',
+    action: 'ဖောက်သည် စစ်ရန်',
     actionType: 'view_customer_health',
   };
 

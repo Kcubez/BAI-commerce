@@ -50,11 +50,20 @@ export async function GET(req: NextRequest) {
 
   const stage = req.nextUrl.searchParams.get("stage");
   const customerId = req.nextUrl.searchParams.get("customerId");
+  const dateFrom = req.nextUrl.searchParams.get("dateFrom");
+  const dateTo = req.nextUrl.searchParams.get("dateTo");
+
   const where: Prisma.DealWhereInput = { ...ownedByUserOrAdmin(session), ...notDeleted };
   if (stage) where.stage = stage as Prisma.EnumDealStageFilter["equals"];
   if (customerId) where.customerId = customerId;
+  if (dateFrom || dateTo) {
+    where.createdAt = {
+      ...(dateFrom ? { gte: new Date(`${dateFrom}T00:00:00.000Z`) } : {}),
+      ...(dateTo ? { lte: new Date(`${dateTo}T23:59:59.999Z`) } : {}),
+    };
+  }
 
-  const deals = await prisma.deal.findMany({ where, include: dealInclude, orderBy: { updatedAt: "desc" } });
+  const deals = await prisma.deal.findMany({ where, include: dealInclude, orderBy: { createdAt: "desc" } });
   return NextResponse.json({ deals });
 }
 

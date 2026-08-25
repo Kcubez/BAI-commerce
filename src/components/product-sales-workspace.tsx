@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -12,6 +12,7 @@ import {
   CalendarCheck,
   ChevronDown,
   ChevronUp,
+  ClipboardList,
   DollarSign,
   LineChart,
   Megaphone,
@@ -19,6 +20,7 @@ import {
   Percent,
   Pencil,
   Phone,
+  Plus,
   ReceiptText,
   Server,
   Target,
@@ -39,7 +41,15 @@ import {
   useCommerceWorkspaces,
   useSaveCommerceTargets,
 } from '@/hooks/use-commerce-dashboard';
-import type { CommerceActionRecommendation, CommerceDashboard, CommerceDashboardParams, CommerceWorkspaceData } from '@/lib/api';
+import type {
+  CommerceActionRecommendation,
+  CommerceDashboard,
+  CommerceDashboardParams,
+  CommerceWorkspaceData,
+  DealRecord,
+  MarketingMetricRecord,
+  ProductRecord,
+} from '@/lib/api';
 import { commerceDashboardKeys } from '@/hooks/use-commerce-dashboard';
 import { trashKeys } from '@/hooks/use-trash';
 import { useDateFilter } from '@/hooks/use-date-filter';
@@ -143,14 +153,26 @@ function SmartSuggestions({
   recommendations,
   isLoading,
   onSetTargets,
+  areaFilter,
+  limit,
 }: {
   recommendations?: CommerceActionRecommendation[];
   isLoading: boolean;
-  onSetTargets: () => void;
+  onSetTargets?: () => void;
+  areaFilter?: 'sales' | 'marketing' | 'inventory' | 'finance' | 'general';
+  limit?: number;
 }) {
   const router = useRouter();
-  const [visible, setVisible] = useState(false);
-  if (!isLoading && (!recommendations || recommendations.length === 0)) return null;
+  const [visible, setVisible] = useState(true);
+  
+  const filtered = areaFilter && areaFilter !== 'general'
+    ? (recommendations?.filter((rec) => rec.area === areaFilter || (areaFilter === 'sales' && rec.area === 'general')) ?? [])
+    : (recommendations ?? []);
+
+  const maxCount = limit ?? (areaFilter === 'general' || !areaFilter ? 4 : 2);
+  const displayRecs = filtered.slice(0, maxCount);
+
+  if (!isLoading && displayRecs.length === 0) return null;
 
   return (
     <section className="overflow-hidden rounded-xl border-2 border-sky-200 bg-sky-50/30 shadow-sm dark:border-sky-900/60 dark:bg-sky-950/15">
@@ -160,7 +182,7 @@ function SmartSuggestions({
             <Bot className="h-4 w-4 text-sky-600" />
             Smart Suggestions
           </h2>
-          <p className="mt-1 text-xs text-muted-foreground">Suggestions are hidden until you choose to review them.</p>
+          <p className="mt-1 text-xs text-muted-foreground">ဒီကာလအတွက် အဓိကဆောင်ရွက်ရန် လိုအပ်ချက်များကို တွက်ချက်ဖော်ပြထားပါသည်။</p>
         </div>
         <Button
           variant="outline"
@@ -173,40 +195,46 @@ function SmartSuggestions({
         </Button>
       </div>
       {visible && (
-        <div className="grid grid-cols-1 gap-6 border-t border-sky-200 p-5 md:grid-cols-2 dark:border-sky-900/60">
-          {(recommendations ?? []).slice(0, 4).map((rec, index) => {
-            const isAlert = rec.severity === 'urgent' || rec.severity === 'warning';
-            const borderColor = isAlert ? 'border-red-300 dark:border-red-900/60' : 'border-emerald-300 dark:border-emerald-900/60';
-            const borderLeftColor = isAlert ? 'border-l-red-500' : 'border-l-emerald-500';
-            const iconColor = isAlert ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
-            const Icon = isAlert ? AlertTriangle : Award;
-            return (
-              <div key={`${rec.actionType}-${index}`} className={`bg-card border-2 ${borderColor} border-l-8 ${borderLeftColor} rounded-xl p-5 flex flex-col justify-center shadow-sm`}>
-                <div className="flex items-center gap-3 mb-2">
-                  <Icon className={`${iconColor} w-5 h-5 flex-shrink-0`} />
-                  <h4 className="font-bold text-foreground text-sm">{rec.title}</h4>
-                </div>
-                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{rec.insight}</p>
-                {rec.action && (
-                  <div className="mt-3">
-                    <button
-                      onClick={() => {
-                        if (rec.actionType === 'set_target_modal') onSetTargets();
-                        else router.push(recommendationActionLink[rec.actionType]);
-                      }}
-                      className={`${
-                        isAlert
-                          ? 'bg-red-600 hover:bg-red-700 text-white'
-                          : 'bg-background border-2 border-slate-300 dark:border-slate-700 text-foreground hover:bg-muted'
-                      } px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer`}
-                    >
-                      {rec.action}
-                    </button>
+        <div className="grid grid-cols-1 gap-4 border-t border-sky-200 p-5 md:grid-cols-2 dark:border-sky-900/60">
+          {isLoading ? (
+            <p className="text-xs text-muted-foreground animate-pulse py-2">အကြံပြုချက်များကို တွက်ချက်နေပါသည်…</p>
+          ) : (
+            displayRecs.map((rec, index) => {
+              const isAlert = rec.severity === 'urgent' || rec.severity === 'warning';
+              const borderColor = isAlert ? 'border-amber-300 dark:border-amber-900/60' : 'border-emerald-300 dark:border-emerald-900/60';
+              const borderLeftColor = isAlert ? 'border-l-amber-500' : 'border-l-emerald-500';
+              const iconColor = isAlert ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400';
+              const Icon = isAlert ? AlertTriangle : Award;
+              return (
+                <div key={`${rec.actionType}-${index}`} className={`bg-card border-2 ${borderColor} border-l-8 ${borderLeftColor} rounded-xl p-5 flex flex-col justify-between shadow-sm`}>
+                  <div>
+                    <div className="flex items-center gap-3 mb-2">
+                      <Icon className={`${iconColor} w-5 h-5 flex-shrink-0`} />
+                      <h4 className="font-bold text-foreground text-sm">{rec.title}</h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{rec.insight}</p>
                   </div>
-                )}
-              </div>
-            );
-          })}
+                  {rec.action && (
+                    <div className="mt-3.5 flex justify-start">
+                      <button
+                        onClick={() => {
+                          if (rec.actionType === 'set_target_modal' && onSetTargets) onSetTargets();
+                          else if (recommendationActionLink[rec.actionType]) router.push(recommendationActionLink[rec.actionType]);
+                        }}
+                        className={`${
+                          isAlert
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        } px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer inline-flex items-center gap-1`}
+                      >
+                        {rec.action}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       )}
     </section>
@@ -214,53 +242,168 @@ function SmartSuggestions({
 }
 
 function CommerceLineChart({ data }: { data: { label: string; value: number }[] }) {
-  const dailyIncome = data.length ? data.map((point) => point.value) : Array.from({ length: 30 }, () => 0);
-  const chartLeft = 50;
-  const chartRight = 680;
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const dailyIncome = data.length ? data.map((point) => point.value) : Array.from({ length: 12 }, () => 0);
+  const chartLeft = 60;
+  const chartRight = 670;
   const chartWidth = chartRight - chartLeft;
-  const chartBottom = 190;
-  const chartTop = 20;
+  const chartBottom = 185;
+  const chartTop = 25;
   const isEmpty = dailyIncome.every((value) => value === 0);
-  const maxIncome = isEmpty ? 5 : Math.max(1, Math.ceil(Math.max(...dailyIncome) / 500_000) * 500_000);
+  const maxIncome = isEmpty ? 500_000 : Math.max(100_000, Math.ceil(Math.max(...dailyIncome) / 500_000) * 500_000);
   const divisor = Math.max(dailyIncome.length - 1, 1);
+  const slotWidth = chartWidth / divisor;
   const points = dailyIncome.map((income, index) => `${chartLeft + (index / divisor) * chartWidth},${chartBottom - (income / maxIncome) * (chartBottom - chartTop)}`).join(' ');
-  const labels = data.length ? data.map((point) => point.label) : Array.from({ length: 30 }, (_, index) => String(index + 1));
-  const yLabels = isEmpty ? [0, 1, 2, 3, 4, 5] : Array.from({ length: 6 }, (_, index) => Math.round((maxIncome / 5) * index));
+  const labels = data.length ? data.map((point) => point.label) : Array.from({ length: 12 }, (_, index) => String(index + 1));
+  const yLabels = Array.from({ length: 6 }, (_, index) => Math.round((maxIncome / 5) * index));
+  const hovered = hoveredIndex !== null && data[hoveredIndex] ? data[hoveredIndex] : null;
+
   return (
     <div className="relative w-full mt-4 select-none" aria-label="Daily income trend chart" role="img">
       <svg viewBox="0 0 700 240" className="w-full overflow-visible" style={{ display: 'block' }} preserveAspectRatio="xMidYMid meet">
-        <defs><linearGradient id="commerceLineGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.12" /><stop offset="100%" stopColor="#0ea5e9" stopOpacity="0.05" /></linearGradient></defs>
-        {[20, 54, 88, 122, 156, 190].map((y) => <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#f1f5f9" className="dark:stroke-slate-800" />)}
-        {labels.map((_, index) => chartLeft + (index / divisor) * chartWidth).map((x, index) => <line key={index} x1={x} y1="20" x2={x} y2="190" stroke="#f8fafc" className="dark:stroke-slate-900" />)}
-        {yLabels.map((value, index) => <text key={`${value}-${index}`} x="42" y={194 - index * 34} textAnchor="end" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '9px', fontFamily: "'Inter', sans-serif" }}>{value.toLocaleString()}</text>)}
+        <defs>
+          <linearGradient id="commerceLineGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#0ea5e9" stopOpacity="0.01" />
+          </linearGradient>
+        </defs>
+        {[25, 57, 89, 121, 153, 185].map((y) => (
+          <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" className="dark:stroke-slate-800" />
+        ))}
+        {yLabels.map((value, index) => (
+          <text key={`${value}-${index}`} x="52" y={189 - index * 32} textAnchor="end" className="fill-slate-500 dark:fill-slate-400 font-mono" style={{ fontSize: '9px' }}>
+            {value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value.toLocaleString()}
+          </text>
+        ))}
         {!isEmpty && <path d={`M ${points.split(' ').join(' L ')} L ${chartRight} ${chartBottom} L ${chartLeft} ${chartBottom} Z`} fill="url(#commerceLineGradient)" />}
-        {!isEmpty && <line x1={chartLeft} y1="190" x2={chartRight} y2="190" stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />}
-        {!isEmpty && labels.map((_, index) => chartLeft + (index / divisor) * chartWidth).map((x, index) => <line key={`tick-${index}`} x1={x} y1="190" x2={x} y2="195" stroke="#cbd5e1" strokeWidth="1.2" className="dark:stroke-slate-700" />)}
-        {labels.map((label, index) => <text key={`${label}-${index}`} x={chartLeft + (index / divisor) * chartWidth} y="209" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '8px', fontFamily: "'Inter', sans-serif" }}>{label}</text>)}
-        {!isEmpty && <polyline points={points} fill="none" stroke="#0ea5e9" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
-        {!isEmpty && points.split(' ').map((point) => { const [cx, cy] = point.split(','); return <circle key={point} cx={cx} cy={cy} r="3" fill="#0ea5e9" stroke="white" strokeWidth="1.5" />; })}
-        <text x="375" y="225" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '10px', fontWeight: 700, fontFamily: "'Inter', sans-serif" }}>Day of Month</text>
+        <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />
+        {labels.map((label, index) => {
+          const x = chartLeft + (index / divisor) * chartWidth;
+          const shouldShowLabel = labels.length <= 15 || index === 0 || index === labels.length - 1 || index % Math.ceil(labels.length / 10) === 0;
+          return (
+            <g key={`${label}-${index}`}>
+              <line x1={x} y1={chartBottom} x2={x} y2={chartBottom + 4} stroke="#cbd5e1" strokeWidth="1" className="dark:stroke-slate-700" />
+              {shouldShowLabel && (
+                <text x={x} y="206" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '8.5px', fontFamily: "'Inter', sans-serif" }}>
+                  {label}
+                </text>
+              )}
+            </g>
+          );
+        })}
+        {!isEmpty && <polyline points={points} fill="none" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />}
+        {!isEmpty && points.split(' ').map((point, index) => {
+          const [cx, cy] = point.split(',').map(Number);
+          return (
+            <g key={point}>
+              <circle cx={cx} cy={cy} r={hoveredIndex === index ? 6 : 3.5} fill="#0ea5e9" stroke="white" strokeWidth={hoveredIndex === index ? 2.5 : 1.5} />
+              <rect
+                x={cx - slotWidth / 2}
+                y={chartTop}
+                width={Math.max(12, slotWidth)}
+                height={chartBottom - chartTop + 20}
+                fill="transparent"
+                className="cursor-pointer"
+                onMouseEnter={() => setHoveredIndex(index)}
+                onMouseLeave={() => setHoveredIndex(null)}
+              />
+            </g>
+          );
+        })}
       </svg>
+      {hovered && (
+        <div
+          className="pointer-events-none absolute z-20 transition-all duration-75"
+          style={{
+            left: `${((chartLeft + (hoveredIndex! / divisor) * chartWidth) / 700) * 100}%`,
+            top: `${((chartBottom - (hovered.value / maxIncome) * (chartBottom - chartTop)) / 240) * 100}%`,
+            transform: 'translate(-50%, -120%)',
+          }}
+        >
+          <div className="whitespace-nowrap rounded-lg border border-slate-700/50 bg-slate-900/95 px-3 py-1.5 text-xs text-white shadow-xl backdrop-blur-sm">
+            <span className="font-semibold text-slate-300">{hovered.label}: </span>
+            <b className="text-sky-400 font-bold">{hovered.value.toLocaleString()} MMK</b>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function CommerceBarChart({ data }: { data: { label: string; value: number }[] }) {
-  const dailyOrders = data.length ? data.map((point) => point.value) : Array.from({ length: 30 }, () => 0);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const dailyOrders = data.length ? data.map((point) => point.value) : Array.from({ length: 12 }, () => 0);
   const chartLeft = 50;
   const chartWidth = 630;
   const slotWidth = chartWidth / dailyOrders.length;
   const maxOrders = Math.max(5, Math.ceil(Math.max(...dailyOrders) / 5) * 5);
+  const hovered = hoveredIndex !== null && data[hoveredIndex] ? data[hoveredIndex] : null;
+
   return (
     <div className="relative w-full mt-4 select-none" aria-label="Daily order volume chart" role="img">
       <svg viewBox="0 0 700 240" className="w-full overflow-visible" style={{ display: 'block' }} preserveAspectRatio="xMidYMid meet">
-        {[20, 54, 88, 122, 156, 190].map((y) => <line key={y} x1="50" y1={y} x2="680" y2={y} stroke="#f1f5f9" className="dark:stroke-slate-800" />)}
-        {Array.from({ length: 6 }, (_, index) => Math.round((maxOrders / 5) * index)).map((value, index) => <text key={value} x="42" y={194 - index * 34} textAnchor="end" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '9px', fontFamily: "'Inter', sans-serif" }}>{value}</text>)}
-        {dailyOrders.map((_, index) => chartLeft + index * slotWidth).map((x, index) => <line key={index} x1={x} y1="20" x2={x} y2="190" stroke="#f1f5f9" className="dark:stroke-slate-800" />)}
-        {dailyOrders.map((orders, index) => { const height = (orders / maxOrders) * 170; const x = chartLeft + index * slotWidth + 3; const y = 190 - height; const width = Math.max(4, slotWidth - 6); return <path key={index} d={height ? `M ${x} 190 V ${y + 4} Q ${x} ${y} ${x + 4} ${y} H ${x + width - 4} Q ${x + width} ${y} ${x + width} ${y + 4} V 190 Z` : ''} fill="#8b5cf6" opacity="0.85" />; })}
-        {(data.length ? data : Array.from({ length: 30 }, (_, index) => ({ label: String(index + 1), value: 0 }))).map((point, index) => <text key={`${point.label}-${index}`} x={chartLeft + index * slotWidth + slotWidth / 2} y="207" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '8px', fontFamily: "'Inter', sans-serif" }}>{point.label}</text>)}
-        <text x="365" y="225" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '10px', fontWeight: 700, fontFamily: "'Inter', sans-serif" }}>Day of Month</text>
+        <defs>
+          <linearGradient id="orderBarGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.9" />
+            <stop offset="100%" stopColor="#6d28d9" stopOpacity="0.75" />
+          </linearGradient>
+        </defs>
+        {[20, 54, 88, 122, 156, 190].map((y) => (
+          <line key={y} x1="50" y1={y} x2="680" y2={y} stroke="#f1f5f9" className="dark:stroke-slate-800" />
+        ))}
+        {Array.from({ length: 6 }, (_, index) => Math.round((maxOrders / 5) * index)).map((value, index) => (
+          <text key={value} x="42" y={194 - index * 34} textAnchor="end" className="fill-slate-500 dark:fill-slate-400 font-mono" style={{ fontSize: '9px' }}>
+            {value}
+          </text>
+        ))}
+        {dailyOrders.map((orders, index) => {
+          const height = (orders / maxOrders) * 170;
+          const barWidth = Math.max(6, Math.min(28, slotWidth - 6));
+          const x = chartLeft + index * slotWidth + (slotWidth - barWidth) / 2;
+          const y = 190 - height;
+          return (
+            <g key={index} onMouseEnter={() => setHoveredIndex(index)} onMouseLeave={() => setHoveredIndex(null)} className="cursor-pointer">
+              {height > 0 && (
+                <rect
+                  x={x}
+                  y={y}
+                  width={barWidth}
+                  height={height}
+                  rx="3"
+                  fill="url(#orderBarGradient)"
+                  className="transition-all duration-150 hover:brightness-110"
+                />
+              )}
+              <rect x={chartLeft + index * slotWidth} y="20" width={slotWidth} height="170" fill="transparent" />
+            </g>
+          );
+        })}
+        {(data.length ? data : Array.from({ length: 12 }, (_, index) => ({ label: String(index + 1), value: 0 }))).map((point, index) => {
+          const x = chartLeft + index * slotWidth + slotWidth / 2;
+          const shouldShow = data.length <= 15 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 10) === 0;
+          return shouldShow ? (
+            <text key={`${point.label}-${index}`} x={x} y="207" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '8.5px', fontFamily: "'Inter', sans-serif" }}>
+              {point.label}
+            </text>
+          ) : null;
+        })}
+        <line x1="50" y1="190" x2="680" y2="190" stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />
       </svg>
+      {hovered && (
+        <div
+          className="pointer-events-none absolute z-20 transition-all duration-75"
+          style={{
+            left: `${((chartLeft + hoveredIndex! * slotWidth + slotWidth / 2) / 700) * 100}%`,
+            top: `${((190 - (hovered.value / maxOrders) * 170) / 240) * 100}%`,
+            transform: 'translate(-50%, -120%)',
+          }}
+        >
+          <div className="whitespace-nowrap rounded-lg border border-slate-700/50 bg-slate-900/95 px-3 py-1.5 text-xs text-white shadow-xl backdrop-blur-sm">
+            <span className="font-semibold text-slate-300">{hovered.label}: </span>
+            <b className="text-violet-400 font-bold">{hovered.value} Orders</b>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -371,13 +514,13 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
 
   return (
     <svg className="h-full w-full overflow-visible" viewBox="0 0 680 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ad spend compared to ad driven orders">
-      {[42, 88, 134, 180, 226].map((y) => <line key={y} x1={chartLeft} x2={chartRight} y1={y} y2={y} stroke="#e2e8f0" />)}
+      {[42, 88, 134, 180, 226].map((y) => <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#e2e8f0" className="dark:stroke-slate-800" />)}
       {weekly.map((_, index) => {
         const x = chartLeft + 20 + index * slot;
-        return <line key={`grid-${index}`} x1={x} x2={x} y1={chartTop} y2={chartBottom} stroke="#f8fafc" />;
+        return <line key={`grid-${index}`} x1={x} x2={x} y1={chartTop} y2={chartBottom} stroke="#f8fafc" className="dark:stroke-slate-900" />;
       })}
-      {spendLabels.map((value, index) => <text key={`${value}-${index}`} x="50" y={46 + index * 46} textAnchor="end" className="fill-slate-500" style={{ fontSize: '9px' }}>{value.toLocaleString()}</text>)}
-      {orderLabels.map((value, index) => <text key={`${value}-${index}`} x="668" y={46 + index * 46} textAnchor="start" className="fill-emerald-600" style={{ fontSize: '9px' }}>{value}</text>)}
+      {spendLabels.map((value, index) => <text key={`${value}-${index}`} x="50" y={46 + index * 46} textAnchor="end" className="fill-slate-500 font-mono" style={{ fontSize: '9px' }}>{value.toLocaleString()}</text>)}
+      {orderLabels.map((value, index) => <text key={`${value}-${index}`} x="668" y={46 + index * 46} textAnchor="start" className="fill-emerald-600 font-bold font-mono" style={{ fontSize: '9px' }}>{value}</text>)}
       {!isEmpty && weekly.map(([week, spend], index) => {
         const x = chartLeft + index * slot + 4;
         const height = (Number(spend) / maxSpend) * (chartBottom - chartTop);
@@ -385,86 +528,401 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
       })}
       {!isEmpty && <polyline points={orderPoints} fill="none" stroke="#10b981" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" />}
       {!isEmpty && orderPoints.split(' ').map((point) => { const [cx, cy] = point.split(','); return <circle key={point} cx={cx} cy={cy} r="4" fill="#10b981" stroke="white" strokeWidth="2" />; })}
-      {!isEmpty && <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" />}
+      {!isEmpty && <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />}
       {weekly.map(([week], index) => {
         const x = chartLeft + 20 + index * slot;
-        return <g key={`tick-${week}`}>{!isEmpty && <line x1={x} x2={x} y1={chartBottom} y2={chartBottom + 6} stroke="#cbd5e1" strokeWidth="1.2" />}<text x={x} y="250" textAnchor="middle" className="fill-slate-500" style={{ fontSize: '10px' }}>{week}</text></g>;
+        return <g key={`tick-${week}`}>{!isEmpty && <line x1={x} x2={x} y1={chartBottom} y2={chartBottom + 6} stroke="#cbd5e1" strokeWidth="1.2" className="dark:stroke-slate-700" />}<text x={x} y="250" textAnchor="middle" className="fill-slate-500" style={{ fontSize: '10px' }}>{week}</text></g>;
       })}
     </svg>
   );
 }
 
-function FinanceWorkspace({ data, recommendations, isRecommendationsLoading }: { data?: CommerceWorkspaceData['finance']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean }) {
+type FinanceEntryView = CommerceWorkspaceData['finance']['accounting']['entries'][number];
+type FinanceEntryForm = {
+  entryDate: string;
+  title: string;
+  amount: string;
+  cashType: string;
+  accountingType: string;
+  status: string;
+  counterparty: string;
+  dueDate: string;
+  voucherNumber: string;
+  notes: string;
+};
+
+const financeEntryTypes = [
+  ['salary', 'Salary', 'Payroll costs', Wallet, 'border-l-sky-500'],
+  ['cogs', 'COGS', 'Cost of goods sold', Package, 'border-l-violet-500'],
+  ['operating_expense', 'Operating Expenses', 'Running costs', ReceiptText, 'border-l-amber-500'],
+  ['payment', 'Payments', 'Payment records', DollarSign, 'border-l-emerald-500'],
+  ['receivable', 'Receivables', 'Outstanding income', Users, 'border-l-cyan-500'],
+  ['debt', 'Debt', 'Outstanding liabilities', Wallet, 'border-l-rose-500'],
+  ['voucher', 'Vouchers', 'Supporting records', ReceiptText, 'border-l-slate-500'],
+  ['owner_capital', 'Owner Capital', 'Business investment', Wallet, 'border-l-indigo-500'],
+] as const;
+
+const financeStatuses = ['recorded', 'pending', 'paid', 'settled', 'overdue'];
+
+function financeTypeLabel(value: string) {
+  return financeEntryTypes.find(([key]) => key === value)?.[1] ?? value.replaceAll('_', ' ');
+}
+
+function defaultCashType(accountingType: string) {
+  if (accountingType === 'owner_capital') return 'Capital';
+  if (['payment', 'receivable', 'voucher'].includes(accountingType)) return 'Income';
+  return 'Expense';
+}
+
+function FinanceWorkspace({ data, recommendations, isRecommendationsLoading, defaultDate }: { data?: CommerceWorkspaceData['finance']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean; defaultDate?: string }) {
+  const queryClient = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const getEmptyForm = (): FinanceEntryForm => ({
+    entryDate: defaultDate || data?.accounting.entries[0]?.date || today,
+    title: '',
+    amount: '',
+    cashType: 'Expense',
+    accountingType: 'operating_expense',
+    status: 'recorded',
+    counterparty: '',
+    dueDate: '',
+    voucherNumber: '',
+    notes: '',
+  });
   const monthly: [string, number, number][] = data?.timeline.length ? data.timeline.map((item) => [item.label, item.revenue, item.expense]) : [['Feb', 0, 0], ['Mar', 0, 0], ['Apr', 0, 0], ['May', 0, 0], ['Jun', 0, 0], ['Jul', 0, 0]];
   const breakdown: [string, number, number, string][] = data?.expenseBreakdown.length ? data.expenseBreakdown.map((item, index) => [item.category, item.percent, item.value, ['#0ea5e9', '#94a3b8', '#f59e0b', '#64748b', '#8b5cf6'][index] ?? '#64748b']) : [];
   const [typeFilter, setTypeFilter] = useState('All');
-  const [categoryFilter, setCategoryFilter] = useState('All');
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('All');
   const [page, setPage] = useState(1);
+  const [recordDialogOpen, setRecordDialogOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<FinanceEntryView | null>(null);
+  const [deleteRecord, setDeleteRecord] = useState<FinanceEntryView | null>(null);
+  const [recordForm, setRecordForm] = useState<FinanceEntryForm>(getEmptyForm);
+  const [isSavingRecord, setIsSavingRecord] = useState(false);
+  const [isDeletingRecord, setIsDeletingRecord] = useState(false);
   const accountingEntries = data?.accounting.entries ?? [];
-  const records = accountingEntries.length
-    ? accountingEntries.map((entry) => ({ id: entry.id, date: entry.date, description: entry.title, category: entry.accountingType.replaceAll('_', ' '), type: entry.cashType === 'Income' ? 'Income' as const : 'Expense' as const, amount: `${entry.cashType === 'Income' ? '+' : '-'}${amount(entry.amount)}`, accountingType: entry.accountingType.replaceAll('_', ' '), status: entry.status, counterparty: entry.counterparty ?? '—', dueDate: entry.dueDate ?? '—' }))
-    : data?.records.map((record) => ({ ...record, amount: `${record.type === 'Income' ? '+' : '-'}${amount(record.amount)}`, accountingType: null, status: null, counterparty: null, dueDate: null })) ?? [];
-  const filteredRecords = records.filter((record) => (typeFilter === 'All' || record.type === typeFilter) && (categoryFilter === 'All' || record.category === categoryFilter));
+  const filteredRecords = accountingEntries.filter((record) => {
+    const cashLabel = record.cashType === 'Income' || record.cashType === 'Capital' ? record.cashType : 'Expense';
+    return (typeFilter === 'All' || cashLabel === typeFilter || record.accountingType === typeFilter) && (statusFilter === 'All' || record.status === statusFilter);
+  });
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
   const pagedRecords = filteredRecords.slice((page - 1) * pageSize, page * pageSize);
-  // Finance uses the same deterministic Burmese heuristic feed as the main
-  // dashboard, limited to recommendations actionable from this workspace.
-  const financeRecommendations = recommendations?.filter((recommendation) => recommendation.area === 'finance') ?? [];
-  const refreshFinanceRecords = () => window.location.reload();
-  const addFinanceRecord = async () => {
-    const title = window.prompt('Record description'); if (!title) return;
-    const amountValue = window.prompt('Amount (MMK)'); const amount = Number(amountValue);
-    if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a valid positive amount');
-    const response = await fetch('/api/commerce/finance/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, amount, accountingType: 'operating_expense', cashType: 'Expense' }) });
-    if (!response.ok) return toast.error('Could not add finance record');
-    toast.success('Finance record added'); refreshFinanceRecords();
+  const accountingTotals = data?.accounting.totals ?? {};
+  const accountingExpenseTotal = (accountingTotals.salary ?? 0) + (accountingTotals.cogs ?? 0) + (accountingTotals.operating_expense ?? 0);
+
+  const updateForm = (key: keyof FinanceEntryForm, value: string) => {
+    setRecordForm((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === 'accountingType' ? { cashType: defaultCashType(value) } : {}),
+    }));
   };
-  useEffect(() => {
-    const onAction = async (event: MouseEvent) => {
-      const button = (event.target as HTMLElement).closest('button[aria-label]'); const label = button?.getAttribute('aria-label') || '';
-      const description = label.replace(/^(Edit|Delete) /, ''); const record = records.find((item) => item.description === description);
-      if (!record || (!label.startsWith('Edit ') && !label.startsWith('Delete '))) return;
-      event.preventDefault(); event.stopPropagation();
-      if (label.startsWith('Delete ')) { if (!window.confirm(`Delete ${description}?`)) return; const response = await fetch(`/api/commerce/finance/entries/${record.id}`, { method: 'DELETE' }); if (!response.ok) return toast.error('Could not delete finance record'); toast.success('Finance record deleted'); refreshFinanceRecords(); return; }
-      const title = window.prompt('Record description', record.description); if (!title) return;
-      const amountValue = window.prompt('Amount (MMK)', record.amount.replace(/[^0-9.]/g, '')); const value = Number(amountValue); if (!Number.isFinite(value) || value <= 0) return toast.error('Enter a valid positive amount');
-      const response = await fetch(`/api/commerce/finance/entries/${record.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, amount: value, accountingType: record.accountingType || 'operating_expense', status: record.status || 'recorded' }) }); if (!response.ok) return toast.error('Could not update finance record'); toast.success('Finance record updated'); refreshFinanceRecords();
+  const refreshFinance = async () => {
+    await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+  };
+  const openAddRecord = () => {
+    setEditingRecord(null);
+    setRecordForm(getEmptyForm());
+    setRecordDialogOpen(true);
+  };
+  const openEditRecord = (record: FinanceEntryView) => {
+    setEditingRecord(record);
+    setRecordForm({
+      entryDate: record.date,
+      title: record.title,
+      amount: String(record.amount),
+      cashType: record.cashType || defaultCashType(record.accountingType),
+      accountingType: record.accountingType,
+      status: record.status || 'recorded',
+      counterparty: record.counterparty ?? '',
+      dueDate: record.dueDate ?? '',
+      voucherNumber: record.voucherNumber ?? '',
+      notes: record.notes ?? '',
+    });
+    setRecordDialogOpen(true);
+  };
+  const saveRecord = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const numericAmount = Number(recordForm.amount);
+    if (!recordForm.title.trim() || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+      toast.error('Enter a description and a positive amount');
+      return;
+    }
+    setIsSavingRecord(true);
+    const payload = {
+      entryDate: recordForm.entryDate,
+      title: recordForm.title.trim(),
+      amount: numericAmount,
+      cashType: recordForm.cashType,
+      accountingType: recordForm.accountingType,
+      status: recordForm.status,
+      counterparty: recordForm.counterparty.trim() || null,
+      dueDate: recordForm.dueDate || null,
+      voucherNumber: recordForm.voucherNumber.trim() || null,
+      notes: recordForm.notes.trim() || null,
     };
-    document.addEventListener('click', onAction, true); return () => document.removeEventListener('click', onAction, true);
-  }, [records]);
+    const response = await fetch(editingRecord ? `/api/commerce/finance/entries/${editingRecord.id}` : '/api/commerce/finance/entries', {
+      method: editingRecord ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setIsSavingRecord(false);
+    if (!response.ok) {
+      toast.error(editingRecord ? 'Could not update finance record' : 'Could not add finance record');
+      return;
+    }
+    toast.success(editingRecord ? 'Finance record updated' : 'Finance record added');
+    setRecordDialogOpen(false);
+    await refreshFinance();
+  };
+  const confirmDeleteRecord = async () => {
+    if (!deleteRecord) return;
+    setIsDeletingRecord(true);
+    const response = await fetch(`/api/commerce/finance/entries/${deleteRecord.id}`, { method: 'DELETE' });
+    setIsDeletingRecord(false);
+    if (!response.ok) {
+      toast.error('Could not delete finance record');
+      return;
+    }
+    toast.success('Finance record moved to Trash');
+    setDeleteRecord(null);
+    await refreshFinance();
+  };
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Revenue" value={amount(data?.kpis.revenue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Total Expense" value={amount(data?.kpis.expense ?? 0)} unit="MMK" icon={ReceiptText} accentClass="border-l-4 border-l-red-500" /><FinanceKpiCard label="Profit / Loss" value={amount(data?.kpis.profit ?? 0)} unit="MMK" icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /><FinanceKpiCard label="Profit Margin" value={`${(data?.kpis.profitMargin ?? 0).toFixed(1)}%`} icon={Percent} accentClass="border-l-4 border-l-emerald-500" /></div>
-      <div className="order-30 flex justify-end -mb-6"><Button size="sm" className="h-10 cursor-pointer bg-sky-600 px-4 hover:bg-sky-700" onClick={addFinanceRecord}>+ Add record</Button></div>
-      <div className="order-30 -mb-6">
-      {accountingEntries.length > 0 && <section className="rounded-xl border-2 border-slate-200 bg-card p-5 shadow-sm dark:border-slate-800"><div className="mb-5"><h2 className="text-lg font-black text-slate-900 dark:text-slate-100">Finance Records</h2><p className="mt-1 text-sm text-muted-foreground">Income, expenses, accounting category, status, counterparty, due date, voucher, and payment context in one table.</p></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{[['operating_expense', 'Accounting Expenses', ReceiptText, 'border-l-red-500'], ['receivable', 'Open Receivables', Users, 'border-l-cyan-500'], ['debt', 'Open Debt', Wallet, 'border-l-rose-500'], ['voucher', 'Vouchers', ReceiptText, 'border-l-slate-500'], ['salary', 'Salary', Wallet, 'border-l-sky-500'], ['cogs', 'COGS', Package, 'border-l-violet-500'], ['payment', 'Payments', DollarSign, 'border-l-emerald-500'], ['owner_capital', 'Owner Capital', Wallet, 'border-l-indigo-500']].map(([key, label, Icon, accent]) => <FinanceKpiCard key={key as string} label={label as string} value={key === 'voucher' ? String(accountingEntries.filter((entry) => entry.accountingType === key).length) : amount(data?.accounting.totals[key as string] ?? 0)} unit={key === 'voucher' ? 'records' : 'MMK'} icon={Icon as LucideIcon} accentClass={`border-l-4 ${accent}`} />)}</div></section>}
-      {accountingEntries.length === 0 && <section className="rounded-xl border-2 border-slate-200 bg-card p-5 shadow-sm dark:border-slate-800"><div className="mb-5"><h2 className="flex items-center gap-2 text-lg font-black text-slate-900 dark:text-slate-100"><ReceiptText className="h-5 w-5 text-sky-600" />Finance Records</h2><p className="mt-1 text-sm text-muted-foreground">Income, expenses, accounting category, status, counterparty, due date, voucher, and payment context in one table.</p></div><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{[['Accounting Expenses', ReceiptText, 'border-l-red-500', 'MMK'], ['Open Receivables', Users, 'border-l-cyan-500', 'MMK'], ['Open Debt', Wallet, 'border-l-rose-500', 'MMK'], ['Vouchers', ReceiptText, 'border-l-slate-500', 'records'], ['Salary', Wallet, 'border-l-sky-500', 'MMK'], ['COGS', Package, 'border-l-violet-500', 'MMK'], ['Payments', DollarSign, 'border-l-emerald-500', 'MMK'], ['Owner Capital', Wallet, 'border-l-indigo-500', 'MMK']].map(([label, Icon, accent, unit]) => <FinanceKpiCard key={label as string} label={label as string} value="0" unit={unit as string} icon={Icon as LucideIcon} accentClass={`border-l-4 ${accent}`} />)}</div></section>}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <FinanceKpiCard label="Total Revenue" value={amount(data?.kpis.revenue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" />
+        <FinanceKpiCard label="Total Expense" value={amount(data?.kpis.expense ?? 0)} unit="MMK" icon={ReceiptText} accentClass="border-l-4 border-l-red-500" />
+        <FinanceKpiCard label="Profit / Loss" value={amount(data?.kpis.profit ?? 0)} unit="MMK" icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" />
+        <FinanceKpiCard label="Profit Margin" value={`${(data?.kpis.profitMargin ?? 0).toFixed(1)}%`} icon={Percent} accentClass="border-l-4 border-l-emerald-500" />
       </div>
-      <section className="rounded-xl border-2 border-sky-200 bg-sky-50/40 shadow-sm dark:border-sky-900 dark:bg-sky-950/20">
-        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div><h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Smart Finance Suggestions</h2><p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Review recommendations based on the selected period.</p></div>
-          <Button variant="outline" size="sm" className="h-9 w-fit cursor-pointer" onClick={() => setShowSuggestions((open) => !open)}>{showSuggestions ? 'Hide suggestions' : 'View suggestions'}{showSuggestions ? <ChevronUp className="ml-1.5 h-4 w-4" /> : <ChevronDown className="ml-1.5 h-4 w-4" />}</Button>
-        </div>
-        {showSuggestions && <div className="grid grid-cols-1 gap-4 border-t border-sky-100 p-5 pt-4 md:grid-cols-2 dark:border-sky-900">
-          {isRecommendationsLoading ? <p className="text-sm text-muted-foreground">အကြံပြုချက်များကို တွက်ချက်နေပါသည်…</p> : financeRecommendations.slice(0, 2).map((recommendation) => { const isAlert = recommendation.severity !== 'info'; return <section key={recommendation.title} className={`flex min-h-52 flex-col justify-between rounded-xl border-2 border-l-8 bg-card p-5 shadow-sm ${isAlert ? 'border-amber-300 border-l-amber-500' : 'border-emerald-300 border-l-emerald-500'}`}><div><div className="mb-3 flex items-center gap-3">{isAlert ? <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" /> : <TrendingUp className="h-5 w-5 shrink-0 text-emerald-600" />}<h3 className="text-base font-bold leading-snug text-slate-900 dark:text-slate-100">{recommendation.title}</h3></div><p className="text-sm leading-7 text-slate-600 dark:text-slate-400">{recommendation.insight}</p></div><Button variant={isAlert ? 'default' : 'outline'} size="sm" className={`mt-5 h-9 w-fit rounded-lg px-4 text-xs font-bold ${isAlert ? 'bg-amber-600 text-white hover:bg-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`} onClick={() => document.getElementById('finance-records-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{recommendation.action}</Button></section>; })}
-          {!isRecommendationsLoading && financeRecommendations.length === 0 && <p className="text-sm text-muted-foreground">ဒီကာလအတွက် Finance အကြံပြုချက် မရှိသေးပါ။</p>}
-        </div>}
-      </section>
+
+      <SmartSuggestions recommendations={recommendations} isLoading={isRecommendationsLoading} areaFilter="finance" />
+
       <div className="space-y-6">
         <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Revenue vs Expense Timeline</h2></div><div className="px-4 pb-5 sm:px-6">{monthly.every(([, revenue, expense]) => revenue === 0 && expense === 0) ? <p className="py-12 text-center text-sm text-slate-500">No timeline data yet.</p> : <FinanceTimelineChart monthly={monthly} />}</div></section>
         <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Expense Breakdown</h2></div><div className="p-5 sm:p-6">{breakdown.length === 0 ? <p className="py-12 text-center text-sm text-slate-500">No expense breakdown yet.</p> : <ExpenseBreakdownChart items={breakdown} />}</div></section>
       </div>
-      <section id="finance-records-table" className="order-31 overflow-hidden rounded-b-xl border-x-2 border-b-2 border-slate-200 bg-card shadow-sm [&_h2]:hidden dark:border-slate-800">
-        <div className="border-b-2 border-slate-200 bg-slate-50/60 p-6 dark:border-slate-800 dark:bg-slate-950/40"><div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"><h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Finance Records</h2><div className="flex flex-wrap items-center gap-2"><Select value={typeFilter} onValueChange={(value) => { if (value) { setTypeFilter(value); setPage(1); } }}><SelectTrigger className="h-9 w-32 rounded border-2 border-slate-300 bg-card text-xs font-bold text-slate-800 dark:border-slate-800 dark:text-slate-200">{typeFilter}</SelectTrigger><SelectContent><SelectItem value="All">All</SelectItem><SelectItem value="Income">Income</SelectItem><SelectItem value="Expense">Expense</SelectItem></SelectContent></Select><Select value={categoryFilter} onValueChange={(value) => { if (value) { setCategoryFilter(value); setPage(1); } }}><SelectTrigger className="h-9 w-36 rounded border-2 border-slate-300 bg-card text-xs font-bold text-slate-800 dark:border-slate-800 dark:text-slate-200">{categoryFilter}</SelectTrigger><SelectContent><SelectItem value="All">All</SelectItem><SelectItem value="Product Sales">Product Sales</SelectItem><SelectItem value="Inventory">Inventory</SelectItem><SelectItem value="Marketing">Marketing</SelectItem></SelectContent></Select></div></div></div>
-        <div className="overflow-x-auto"><table className="min-w-[1120px] w-full text-left text-sm"><thead className="border-b-2 border-slate-200 bg-card text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800"><tr>{['Date', 'Description', 'Type', 'Amount (MMK)', 'Accounting Type', 'Status', 'Counterparty', 'Due Date', 'Actions'].map((heading) => <th key={heading} className={`px-5 py-4 ${heading === 'Amount (MMK)' ? 'text-right' : heading === 'Actions' ? 'text-center' : ''}`}>{heading}</th>)}</tr></thead><tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">{pagedRecords.map((record) => <tr key={record.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50"><td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">{record.date}</td><td className="max-w-56 px-5 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{record.description}</td><td className="px-5 py-4"><span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${record.type === 'Income' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>{record.type.toUpperCase()}</span></td><td className={`whitespace-nowrap px-5 py-4 text-right text-sm font-black ${record.amount.startsWith('+') ? 'text-emerald-700' : 'text-red-700'}`}>{record.amount}</td><td className="whitespace-nowrap px-5 py-4 text-xs font-semibold capitalize text-slate-600 dark:text-slate-400">{record.accountingType ?? record.category}</td><td className="px-5 py-4">{record.status ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold lowercase text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">{record.status}</span> : '—'}</td><td className="max-w-40 px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{record.counterparty ?? '—'}</td><td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{record.dueDate ?? '—'}</td><td className="px-5 py-4"><div className="flex items-center justify-center gap-2"><Button aria-label={`Edit ${record.description}`} variant="ghost" size="icon" className="h-9 w-9 cursor-pointer text-blue-600 hover:text-blue-700" onClick={() => toast.info(`Edit ${record.description}`)}><Pencil className="h-4 w-4" /></Button><Button aria-label={`Delete ${record.description}`} variant="ghost" size="icon" className="h-9 w-9 cursor-pointer text-red-600 hover:text-red-700" onClick={() => toast.success('Finance record action selected')}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}{filteredRecords.length === 0 && <tr><td colSpan={9} className="px-6 py-10 text-center text-sm text-slate-500">No finance records found for these filters.</td></tr>}</tbody></table></div>{filteredRecords.length > 0 && <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-6 py-3 dark:border-slate-800 dark:bg-slate-950/40"><span className="text-xs font-semibold text-muted-foreground">Showing {Math.min((page - 1) * pageSize + 1, filteredRecords.length)}–{Math.min(page * pageSize, filteredRecords.length)} of {filteredRecords.length}</span><div className="flex gap-2"><Button variant="outline" size="sm" className="h-8 cursor-pointer text-xs" disabled={page === 1} onClick={() => setPage((current) => current - 1)}>Previous</Button><Button variant="outline" size="sm" className="h-8 cursor-pointer text-xs" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)}>Next</Button></div></div>}
+
+      <section id="finance-records-table" className="overflow-hidden rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+        <div className="border-b-2 border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-black text-slate-900 dark:text-slate-100"><ClipboardList className="h-5 w-5 text-sky-600" />Finance Records</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Income, expenses, accounting category, status, counterparty, due date, voucher, and payment context in one table.</p>
+            </div>
+            <Button size="sm" className="h-10 w-fit cursor-pointer bg-sky-600 px-4 hover:bg-sky-700 text-white font-bold" onClick={openAddRecord}><Plus className="mr-1.5 h-4 w-4" />Add record</Button>
+          </div>
+        </div>
+        <div className="space-y-5 p-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <FinanceKpiCard label="Accounting Expenses" value={amount(accountingExpenseTotal)} unit="MMK" icon={ReceiptText} accentClass="border-l-4 border-l-red-500" />
+            <FinanceKpiCard label="Open Receivables" value={amount(accountingTotals.receivable ?? 0)} unit="MMK" icon={Users} accentClass="border-l-4 border-l-cyan-500" />
+            <FinanceKpiCard label="Open Debt" value={amount(accountingTotals.debt ?? 0)} unit="MMK" icon={Wallet} accentClass="border-l-4 border-l-rose-500" />
+            <FinanceKpiCard label="Vouchers" value={String(accountingEntries.filter((entry) => entry.accountingType === 'voucher').length)} unit="records" icon={ReceiptText} accentClass="border-l-4 border-l-slate-500" />
+          </div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <p className="text-sm font-bold text-slate-700 dark:text-slate-300">Showing {Math.min(pageSize, pagedRecords.length)} of {filteredRecords.length} records</p>
+            <div className="flex flex-wrap gap-2">
+              <Select value={typeFilter} onValueChange={(value) => { if (value) { setTypeFilter(value); setPage(1); } }}><SelectTrigger className="h-10 w-56 rounded-lg border-2 border-slate-200 bg-card text-sm font-bold text-slate-800 dark:border-slate-800 dark:text-slate-200">{typeFilter === 'All' ? 'All' : financeTypeLabel(typeFilter)}</SelectTrigger><SelectContent><SelectItem value="All">All</SelectItem><SelectItem value="Income">Income</SelectItem><SelectItem value="Expense">Expense</SelectItem><SelectItem value="Capital">Capital</SelectItem>{financeEntryTypes.map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent></Select>
+              <Select value={statusFilter} onValueChange={(value) => { if (value) { setStatusFilter(value); setPage(1); } }}><SelectTrigger className="h-10 w-44 rounded-lg border-2 border-slate-200 bg-card text-sm font-bold capitalize text-slate-800 dark:border-slate-800 dark:text-slate-200">{statusFilter}</SelectTrigger><SelectContent><SelectItem value="All">All</SelectItem>{financeStatuses.map((status) => <SelectItem key={status} value={status}>{status}</SelectItem>)}</SelectContent></Select>
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-[1280px] w-full text-left text-sm">
+            <thead className="border-y-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40">
+              <tr>{['Date', 'Description', 'Type', 'Amount (MMK)', 'Accounting Type', 'Status', 'Counterparty', 'Due Date', 'Voucher / Ref', 'Payment / Notes', 'Actions'].map((heading) => <th key={heading} className={`px-5 py-4 ${heading === 'Amount (MMK)' ? 'text-right' : heading === 'Actions' ? 'text-center' : ''}`}>{heading}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
+              {pagedRecords.map((record) => {
+                const signedAmount = record.cashType === 'Expense' ? `-${amount(record.amount)}` : amount(record.amount);
+                return (
+                  <tr key={record.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">{record.date}</td>
+                    <td className="max-w-64 px-5 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{record.title}</td>
+                    <td className="px-5 py-4"><span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${record.cashType === 'Income' || record.cashType === 'Capital' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>{record.cashType.toUpperCase()}</span></td>
+                    <td className={`whitespace-nowrap px-5 py-4 text-right text-sm font-black ${record.cashType === 'Expense' ? 'text-red-700' : 'text-emerald-700'}`}>{signedAmount}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold capitalize text-slate-600 dark:text-slate-400">{financeTypeLabel(record.accountingType)}</td>
+                    <td className="px-5 py-4"><span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold lowercase text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">{record.status}</span></td>
+                    <td className="max-w-40 px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{record.counterparty ?? '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{record.dueDate ?? '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">{record.voucherNumber ?? '—'}</td>
+                    <td className="max-w-64 px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{record.notes ?? '—'}</td>
+                    <td className="px-5 py-4"><div className="flex items-center justify-center gap-2"><Button aria-label={`Edit ${record.title}`} variant="ghost" size="icon" className="h-9 w-9 cursor-pointer text-blue-600 hover:text-blue-700" onClick={() => openEditRecord(record)}><Pencil className="h-4 w-4" /></Button><Button aria-label={`Delete ${record.title}`} variant="ghost" size="icon" className="h-9 w-9 cursor-pointer text-red-600 hover:text-red-700" onClick={() => setDeleteRecord(record)}><Trash2 className="h-4 w-4" /></Button></div></td>
+                  </tr>
+                );
+              })}
+              {filteredRecords.length === 0 && <tr><td colSpan={11} className="px-6 py-10 text-center text-sm text-slate-500">No finance records found for these filters.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        {filteredRecords.length > 0 && <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/60 px-6 py-3 dark:border-slate-800 dark:bg-slate-950/40"><span className="text-xs font-semibold text-muted-foreground">Showing {Math.min((page - 1) * pageSize + 1, filteredRecords.length)}-{Math.min(page * pageSize, filteredRecords.length)} of {filteredRecords.length}</span><div className="flex gap-2"><Button variant="outline" size="sm" className="h-8 cursor-pointer text-xs" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</Button><Button variant="outline" size="sm" className="h-8 cursor-pointer text-xs" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</Button></div></div>}
       </section>
+      <Dialog open={recordDialogOpen} onOpenChange={setRecordDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>{editingRecord ? 'Edit finance record' : 'Add finance record'}</DialogTitle><DialogDescription>Record income, expenses, accounting category, status, voucher, and payment context.</DialogDescription></DialogHeader>
+          <form className="grid gap-4" onSubmit={saveRecord}>
+            <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1 text-sm font-semibold">Date<Input type="date" value={recordForm.entryDate} onChange={(event) => updateForm('entryDate', event.target.value)} /></label><label className="grid gap-1 text-sm font-semibold">Amount (MMK)<Input type="number" min="1" value={recordForm.amount} onChange={(event) => updateForm('amount', event.target.value)} /></label></div>
+            <label className="grid gap-1 text-sm font-semibold">Description<Input value={recordForm.title} onChange={(event) => updateForm('title', event.target.value)} placeholder="Record description" /></label>
+            <div className="grid gap-3 sm:grid-cols-3"><label className="grid gap-1 text-sm font-semibold">Cash type<Select value={recordForm.cashType} onValueChange={(value) => updateForm('cashType', value ?? '')}><SelectTrigger>{recordForm.cashType}</SelectTrigger><SelectContent>{['Income', 'Expense', 'Capital'].map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1 text-sm font-semibold">Accounting type<Select value={recordForm.accountingType} onValueChange={(value) => updateForm('accountingType', value ?? '')}><SelectTrigger>{financeTypeLabel(recordForm.accountingType)}</SelectTrigger><SelectContent>{financeEntryTypes.map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1 text-sm font-semibold">Status<Select value={recordForm.status} onValueChange={(value) => updateForm('status', value ?? '')}><SelectTrigger className="capitalize">{recordForm.status}</SelectTrigger><SelectContent>{financeStatuses.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label></div>
+            <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1 text-sm font-semibold">Counterparty<Input value={recordForm.counterparty} onChange={(event) => updateForm('counterparty', event.target.value)} placeholder="Supplier or customer" /></label><label className="grid gap-1 text-sm font-semibold">Due date<Input type="date" value={recordForm.dueDate} onChange={(event) => updateForm('dueDate', event.target.value)} /></label></div>
+            <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-1 text-sm font-semibold">Voucher / Ref<Input value={recordForm.voucherNumber} onChange={(event) => updateForm('voucherNumber', event.target.value)} placeholder="INV-0001" /></label><label className="grid gap-1 text-sm font-semibold">Payment / Notes<Input value={recordForm.notes} onChange={(event) => updateForm('notes', event.target.value)} placeholder="Payment method, reference, or notes" /></label></div>
+            <div className="flex justify-end gap-2 pt-2"><Button type="button" variant="outline" onClick={() => setRecordDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={isSavingRecord}>{isSavingRecord ? 'Saving...' : editingRecord ? 'Save changes' : 'Add record'}</Button></div>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={Boolean(deleteRecord)} onOpenChange={(open) => !open && setDeleteRecord(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader><AlertDialogTitle>Delete this finance record?</AlertDialogTitle><AlertDialogDescription>This will move the record to Trash using soft delete. It will no longer appear in Finance Records.</AlertDialogDescription></AlertDialogHeader>
+          <AlertDialogFooter><AlertDialogCancel disabled={isDeletingRecord}>Cancel</AlertDialogCancel><AlertDialogAction disabled={isDeletingRecord} className="bg-red-600 text-white hover:bg-red-700" onClick={confirmDeleteRecord}>{isDeletingRecord ? 'Deleting...' : 'Delete'}</AlertDialogAction></AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function SalesWorkspace({ data }: { data?: CommerceWorkspaceData['sales'] }) {
+// ─── Sales Workspace with Full CRUD Deals Table ─────────────────────────────
+
+function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateFrom, dateTo }: { data?: CommerceWorkspaceData['sales']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean; dateFrom?: string; dateTo?: string }) {
+  const queryClient = useQueryClient();
+  const [deals, setDeals] = useState<DealRecord[]>([]);
+  const [isLoadingDeals, setIsLoadingDeals] = useState(true);
+  const [stageFilter, setStageFilter] = useState('ALL');
+  const [dealSearch, setDealSearch] = useState('');
+  const [dealDialogOpen, setDealDialogOpen] = useState(false);
+  const [editingDeal, setEditingDeal] = useState<DealRecord | null>(null);
+  const [deleteDeal, setDeleteDeal] = useState<DealRecord | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const [dealForm, setDealForm] = useState({
+    title: '',
+    customerName: '',
+    quotedAmount: '',
+    stage: 'NEW_LEAD',
+    fulfillmentStatus: 'PENDING',
+    sourceChannel: 'Direct',
+    notes: '',
+  });
+
+  const fetchDeals = async () => {
+    setIsLoadingDeals(true);
+    try {
+      const sp = new URLSearchParams();
+      if (dateFrom) sp.set('dateFrom', dateFrom);
+      if (dateTo) sp.set('dateTo', dateTo);
+      const res = await fetch(`/api/deals?${sp.toString()}`);
+      if (res.ok) {
+        const json = (await res.json()) as { deals?: DealRecord[] };
+        setDeals(json.deals || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingDeals(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchDeals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
+
+  const openAddDeal = () => {
+    setEditingDeal(null);
+    setDealForm({
+      title: '',
+      customerName: '',
+      quotedAmount: '',
+      stage: 'NEW_LEAD',
+      fulfillmentStatus: 'PENDING',
+      sourceChannel: 'Direct',
+      notes: '',
+    });
+    setDealDialogOpen(true);
+  };
+
+  const openEditDeal = (deal: DealRecord) => {
+    setEditingDeal(deal);
+    setDealForm({
+      title: deal.title || '',
+      customerName: deal.customer?.name || '',
+      quotedAmount: deal.quotedAmount ? String(deal.quotedAmount) : '',
+      stage: deal.stage || 'NEW_LEAD',
+      fulfillmentStatus: deal.fulfillmentStatus || 'PENDING',
+      sourceChannel: deal.sourceChannel || 'Direct',
+      notes: deal.notes || '',
+    });
+    setDealDialogOpen(true);
+  };
+
+  const saveDeal = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!dealForm.title.trim()) {
+      toast.error('Deal title is required');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const payload: Record<string, unknown> = {
+        title: dealForm.title.trim(),
+        stage: dealForm.stage,
+        fulfillmentStatus: dealForm.fulfillmentStatus,
+        sourceChannel: dealForm.sourceChannel,
+        quotedAmount: dealForm.quotedAmount ? Number(dealForm.quotedAmount) : null,
+        notes: dealForm.notes.trim() || null,
+      };
+
+      if (dealForm.customerName.trim()) {
+        payload.customerName = dealForm.customerName.trim();
+      }
+
+      const res = await fetch('/api/deals', {
+        method: editingDeal ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingDeal ? { id: editingDeal.id, ...payload } : payload),
+      });
+
+      if (!res.ok) throw new Error('Failed to save deal');
+      toast.success(editingDeal ? 'Deal updated' : 'Deal created');
+      setDealDialogOpen(false);
+      await fetchDeals();
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error saving deal');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const confirmDeleteDeal = async () => {
+    if (!deleteDeal) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/deals?id=${deleteDeal.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete deal');
+      toast.success('Deal moved to Trash');
+      setDeleteDeal(null);
+      await fetchDeals();
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error deleting deal');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const filteredDeals = deals.filter((deal) => {
+    const matchesStage = stageFilter === 'ALL' || deal.stage === stageFilter;
+    const matchesSearch = !dealSearch.trim() || 
+      deal.title.toLowerCase().includes(dealSearch.toLowerCase()) || 
+      (deal.customer?.name && deal.customer.name.toLowerCase().includes(dealSearch.toLowerCase()));
+    return matchesStage && matchesSearch;
+  });
+
   const stageColors = [
     ['border-sky-500', 'bg-sky-50 dark:bg-sky-950/20'],
     ['border-violet-500', 'bg-violet-50 dark:bg-violet-950/20'],
@@ -477,23 +935,336 @@ function SalesWorkspace({ data }: { data?: CommerceWorkspaceData['sales'] }) {
     { label: 'Pending Delivery', count: 0, deals: [] },
     { label: 'Closed Won', count: 0, deals: [] },
   ]).map((stage, index) => ({ ...stage, color: stageColors[index]?.[0] ?? 'border-slate-500', bg: stageColors[index]?.[1] ?? 'bg-slate-50 dark:bg-slate-950/20' }));
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Sales" value={amount(data?.kpis.totalSales ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Orders" value={amount(data?.kpis.orders ?? 0)} icon={Megaphone} accentClass="border-l-4 border-l-violet-500" /><FinanceKpiCard label="Pending Deliveries" value={amount(data?.kpis.pendingDeliveries ?? 0)} icon={Package} accentClass="border-l-4 border-l-amber-500" /><FinanceKpiCard label="Deals in Pipeline" value={amount(data?.kpis.pipelineDeals ?? 0)} icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" /></div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {(data?.insights ?? [{ tone: 'amber' as const, title: 'No delivery signal yet', text: 'Delivery insights will appear after Commerce deals are added.', action: 'Review deliveries' }, { tone: 'emerald' as const, title: 'Pipeline data is ready', text: 'Deal pipeline insights will appear after active deals are recorded.', action: 'View pipeline' }]).map((insight) => <section key={insight.title} className={`bg-card border-2 ${insight.tone === 'emerald' ? 'border-emerald-300 border-l-emerald-500' : insight.tone === 'red' ? 'border-red-300 border-l-red-500' : 'border-amber-300 border-l-amber-500'} border-l-8 rounded-xl shadow-sm flex flex-col justify-between`}><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3">{insight.tone === 'emerald' ? <TrendingUp className="h-5 w-5 text-emerald-600" /> : <AlertTriangle className={`h-5 w-5 ${insight.tone === 'red' ? 'text-red-600' : 'text-amber-600'}`} />}<h3 className="font-bold text-slate-900 dark:text-slate-100">{insight.title}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{insight.text}</p></div><Button variant={insight.tone === 'emerald' ? 'outline' : 'default'} size="sm" className={`mt-4 h-9 w-fit rounded-lg px-4 text-xs font-bold ${insight.tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : insight.tone === 'red' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-amber-600 text-white hover:bg-amber-700'}`} onClick={() => toast.info(insight.action)}>{insight.action}</Button></div></section>)}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <FinanceKpiCard label="Total Sales" value={amount(data?.kpis.totalSales ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-sky-500" />
+        <FinanceKpiCard label="Orders" value={amount(data?.kpis.orders ?? 0)} icon={Megaphone} accentClass="border-l-4 border-l-violet-500" />
+        <FinanceKpiCard label="Pending Deliveries" value={amount(data?.kpis.pendingDeliveries ?? 0)} icon={Package} accentClass="border-l-4 border-l-amber-500" />
+        <FinanceKpiCard label="Deals in Pipeline" value={amount(data?.kpis.pipelineDeals ?? 0)} icon={TrendingUp} accentClass="border-l-4 border-l-emerald-500" />
       </div>
+
+      <SmartSuggestions recommendations={recommendations} isLoading={isRecommendationsLoading} areaFilter="sales" />
+
       <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
-        <div className="flex flex-col gap-3 border-b-2 border-slate-200 bg-slate-50/60 p-6 dark:border-slate-800 dark:bg-slate-950/40 md:flex-row md:items-center md:justify-between"><div><h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Deal Pipeline</h2><p className="mt-1 text-xs text-muted-foreground">Deals grouped by their current sales stage.</p></div><span className="text-xs font-bold text-muted-foreground border-2 border-border bg-muted px-3 py-1 rounded-full">{amount(data?.kpis.pipelineDeals ?? 0)} Active Deals</span></div>
-        <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-4">{stages.map((stage) => <section key={stage.label} className={`rounded-xl border-t-4 ${stage.color} ${stage.bg} p-4`}><div className="mb-4"><h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600 dark:text-slate-300">{stage.label}</h3><p className="mt-1 text-[11px] font-semibold text-slate-500">{stage.count} deals in this stage</p></div><div className="space-y-3">{stage.deals.map((deal) => <button key={deal.id} type="button" onClick={() => toast.info(`${deal.customer} selected`)} className="w-full rounded-lg border border-slate-200 bg-card p-3 text-left text-xs font-bold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:border-slate-800 dark:text-slate-200"><span className="block truncate">{deal.customer}</span><span className="mt-1 block text-[10px] font-semibold text-slate-500">{amount(deal.amount)} MMK</span></button>)}</div><Button variant="ghost" size="sm" className="mt-3 h-8 w-full text-xs font-bold text-slate-600 hover:bg-card" onClick={() => toast.info(`Showing all ${stage.count} ${stage.label.toLowerCase()} deals`)}>View all {stage.count} deals</Button></section>)}</div>
+        <div className="flex flex-col gap-3 border-b-2 border-slate-200 bg-slate-50/60 p-6 dark:border-slate-800 dark:bg-slate-950/40 md:flex-row md:items-center md:justify-between">
+          <div><h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 dark:text-slate-100">Deal Pipeline</h2><p className="mt-1 text-xs text-muted-foreground">Deals grouped by their current sales stage.</p></div>
+          <span className="text-xs font-bold text-muted-foreground border-2 border-border bg-muted px-3 py-1 rounded-full">{amount(data?.kpis.pipelineDeals ?? 0)} Active Deals</span>
+        </div>
+        <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-4">
+          {stages.map((stage) => (
+            <section key={stage.label} className={`rounded-xl border-t-4 ${stage.color} ${stage.bg} p-4`}>
+              <div className="mb-4"><h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-600 dark:text-slate-300">{stage.label}</h3><p className="mt-1 text-[11px] font-semibold text-slate-500">{stage.count} deals in this stage</p></div>
+              <div className="space-y-3">{stage.deals.map((deal) => <div key={deal.id} className="w-full rounded-lg border border-slate-200 bg-card p-3 text-left text-xs font-bold text-slate-700 shadow-sm dark:border-slate-800 dark:text-slate-200"><span className="block truncate">{deal.customer}</span><span className="mt-1 block text-[10px] font-semibold text-slate-500">{amount(deal.amount)} MMK</span></div>)}</div>
+            </section>
+          ))}
+        </div>
       </section>
+
+      {/* Deals Table with CRUD */}
+      <section className="overflow-hidden rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+        <div className="border-b-2 border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-black text-slate-900 dark:text-slate-100">
+                <TrendingUp className="h-5 w-5 text-sky-600" />
+                Deals &amp; Orders Table
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">Manage and track deals, quoted prices, stages, and order fulfillment.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input placeholder="Search deals..." value={dealSearch} onChange={(e) => setDealSearch(e.target.value)} className="h-9 w-48 bg-card text-xs font-semibold" />
+              <Select value={stageFilter} onValueChange={(val) => setStageFilter(val ?? 'ALL')}>
+                <SelectTrigger className="h-9 w-36 text-xs font-bold bg-card">{stageFilter === 'ALL' ? 'All Stages' : stageFilter}</SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Stages</SelectItem>
+                  <SelectItem value="NEW_LEAD">New Lead</SelectItem>
+                  <SelectItem value="QUOTED">Quoted</SelectItem>
+                  <SelectItem value="FOLLOW_UP_NEEDED">Follow-up</SelectItem>
+                  <SelectItem value="PENDING">Pending Delivery</SelectItem>
+                  <SelectItem value="WON">Won / Completed</SelectItem>
+                  <SelectItem value="LOST">Lost</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button size="sm" className="h-9 bg-sky-600 hover:bg-sky-700 text-white font-bold cursor-pointer" onClick={openAddDeal}>
+                <Plus className="mr-1.5 h-4 w-4" /> Add Deal
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40">
+              <tr>
+                <th className="px-5 py-4">Date</th>
+                <th className="px-5 py-4">Deal Title</th>
+                <th className="px-5 py-4">Customer</th>
+                <th className="px-5 py-4 text-right">Quoted Amount</th>
+                <th className="px-5 py-4 text-center">Stage</th>
+                <th className="px-5 py-4 text-center">Fulfillment</th>
+                <th className="px-5 py-4">Channel / Notes</th>
+                <th className="px-5 py-4 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
+              {isLoadingDeals ? (
+                <tr><td colSpan={8} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading deals...</td></tr>
+              ) : filteredDeals.length > 0 ? (
+                filteredDeals.map((deal) => (
+                  <tr key={deal.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">
+                      {new Date(deal.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-5 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{deal.title}</td>
+                    <td className="px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{deal.customer?.name || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-right text-xs font-black text-sky-600 dark:text-sky-400">
+                      {deal.quotedAmount ? `${amount(deal.quotedAmount)} MMK` : '—'}
+                    </td>
+                    <td className="px-5 py-4 text-center">
+                      <span className="rounded-full border border-slate-200 bg-slate-50 dark:bg-slate-900 px-2.5 py-1 text-[10px] font-extrabold uppercase text-slate-700 dark:text-slate-300">
+                        {deal.stage}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4 text-center">
+                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-extrabold uppercase ${deal.fulfillmentStatus === 'FULFILLED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                        {deal.fulfillmentStatus}
+                      </span>
+                    </td>
+                    <td className="max-w-40 truncate px-5 py-4 text-xs text-slate-500">{deal.sourceChannel || deal.notes || '—'}</td>
+                    <td className="px-5 py-4 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700" onClick={() => openEditDeal(deal)}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => setDeleteDeal(deal)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr><td colSpan={8} className="px-6 py-10 text-center text-sm text-slate-500">No deals found for this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Deal Add/Edit Dialog */}
+      <Dialog open={dealDialogOpen} onOpenChange={setDealDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingDeal ? 'Edit Deal' : 'Add New Deal'}</DialogTitle>
+            <DialogDescription>Record deal details, customer, pricing, and stage.</DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={saveDeal}>
+            <div className="grid gap-2">
+              <label className="text-xs font-bold">Deal Title *</label>
+              <Input value={dealForm.title} onChange={(e) => setDealForm({ ...dealForm, title: e.target.value })} placeholder="e.g. Bulk Order 100pcs" required />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Customer Name</label>
+                <Input value={dealForm.customerName} onChange={(e) => setDealForm({ ...dealForm, customerName: e.target.value })} placeholder="Customer name" />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Quoted Amount (MMK)</label>
+                <Input type="number" value={dealForm.quotedAmount} onChange={(e) => setDealForm({ ...dealForm, quotedAmount: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Stage</label>
+                <Select value={dealForm.stage} onValueChange={(val) => setDealForm({ ...dealForm, stage: val ?? 'NEW_LEAD' })}>
+                  <SelectTrigger className="text-xs font-bold">{dealForm.stage}</SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NEW_LEAD">New Lead</SelectItem>
+                    <SelectItem value="QUOTED">Quoted</SelectItem>
+                    <SelectItem value="FOLLOW_UP_NEEDED">Follow Up Needed</SelectItem>
+                    <SelectItem value="PENDING">Pending Delivery</SelectItem>
+                    <SelectItem value="WON">Closed Won</SelectItem>
+                    <SelectItem value="LOST">Lost</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Fulfillment</label>
+                <Select value={dealForm.fulfillmentStatus} onValueChange={(val) => setDealForm({ ...dealForm, fulfillmentStatus: val ?? 'PENDING' })}>
+                  <SelectTrigger className="text-xs font-bold">{dealForm.fulfillmentStatus}</SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PENDING">Pending</SelectItem>
+                    <SelectItem value="PROCESSING">Processing</SelectItem>
+                    <SelectItem value="FULFILLED">Fulfilled</SelectItem>
+                    <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Channel / Source</label>
+              <Input value={dealForm.sourceChannel} onChange={(e) => setDealForm({ ...dealForm, sourceChannel: e.target.value })} placeholder="e.g. Facebook, Direct, Telegram" />
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Notes</label>
+              <Input value={dealForm.notes} onChange={(e) => setDealForm({ ...dealForm, notes: e.target.value })} placeholder="Additional remarks" />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setDealDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={isSaving} className="bg-sky-600 hover:bg-sky-700 text-white font-bold">{isSaving ? 'Saving...' : editingDeal ? 'Save Changes' : 'Create Deal'}</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={Boolean(deleteDeal)} onOpenChange={(open) => !open && setDeleteDeal(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this deal?</AlertDialogTitle>
+            <AlertDialogDescription>This deal will be moved to Trash. It can be restored later from Trash.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={isDeleting} className="bg-red-600 text-white hover:bg-red-700 font-bold" onClick={confirmDeleteDeal}>{isDeleting ? 'Deleting...' : 'Move to Trash'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function MarketingWorkspace({ data }: { data?: CommerceWorkspaceData['marketing'] }) {
+// ─── Marketing Workspace with Full CRUD Metrics Table ───────────────────────
+
+function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, dateFrom, dateTo }: { data?: CommerceWorkspaceData['marketing']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean; dateFrom?: string; dateTo?: string }) {
+  const queryClient = useQueryClient();
+  const [metrics, setMetrics] = useState<MarketingMetricRecord[]>([]);
+  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
+  const [metricDialogOpen, setMetricDialogOpen] = useState(false);
+  const [editingMetric, setEditingMetric] = useState<MarketingMetricRecord | null>(null);
+  const [deleteMetric, setDeleteMetric] = useState<MarketingMetricRecord | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const [metricForm, setMetricForm] = useState({
+    metricDate: new Date().toISOString().slice(0, 10),
+    channel: 'Facebook',
+    campaignName: '',
+    spend: '',
+    reach: '',
+    leads: '',
+    adDrivenOrders: '',
+    notes: '',
+  });
+
+  const fetchMetrics = async () => {
+    setIsLoadingMetrics(true);
+    try {
+      const sp = new URLSearchParams();
+      if (dateFrom) sp.set('dateFrom', dateFrom);
+      if (dateTo) sp.set('dateTo', dateTo);
+      const res = await fetch(`/api/marketing-metrics?${sp.toString()}`);
+      if (res.ok) {
+        const json = (await res.json()) as { metrics?: MarketingMetricRecord[] };
+        setMetrics(json.metrics || []);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingMetrics(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchMetrics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
+
+  const openAddMetric = () => {
+    setEditingMetric(null);
+    setMetricForm({
+      metricDate: dateFrom || new Date().toISOString().slice(0, 10),
+      channel: 'Facebook',
+      campaignName: '',
+      spend: '',
+      reach: '',
+      leads: '',
+      adDrivenOrders: '',
+      notes: '',
+    });
+    setMetricDialogOpen(true);
+  };
+
+  const openEditMetric = (metric: MarketingMetricRecord) => {
+    setEditingMetric(metric);
+    setMetricForm({
+      metricDate: metric.metricDate ? metric.metricDate.slice(0, 10) : new Date().toISOString().slice(0, 10),
+      channel: metric.channel || 'Facebook',
+      campaignName: metric.campaignName || '',
+      spend: metric.spend ? String(metric.spend) : '0',
+      reach: metric.reach ? String(metric.reach) : '',
+      leads: metric.leads ? String(metric.leads) : '',
+      adDrivenOrders: metric.adDrivenOrders ? String(metric.adDrivenOrders) : '',
+      notes: metric.notes || '',
+    });
+    setMetricDialogOpen(true);
+  };
+
+  const saveMetric = async (e: FormEvent) => {
+    e.preventDefault();
+    const spendNum = Number(metricForm.spend);
+    if (!Number.isFinite(spendNum) || spendNum < 0) {
+      toast.error('Enter a valid spend amount');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const payload = {
+        metricDate: metricForm.metricDate,
+        channel: metricForm.channel,
+        campaignName: metricForm.campaignName.trim() || null,
+        spend: spendNum,
+        reach: metricForm.reach ? Number(metricForm.reach) : null,
+        leads: metricForm.leads ? Number(metricForm.leads) : null,
+        adDrivenOrders: metricForm.adDrivenOrders ? Number(metricForm.adDrivenOrders) : null,
+        notes: metricForm.notes.trim() || null,
+      };
+
+      const res = await fetch('/api/marketing-metrics', {
+        method: editingMetric ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingMetric ? { id: editingMetric.id, ...payload } : payload),
+      });
+
+      if (!res.ok) throw new Error('Failed to save marketing metric');
+      toast.success(editingMetric ? 'Metric updated' : 'Metric recorded');
+      setMetricDialogOpen(false);
+      await fetchMetrics();
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error saving metric');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const confirmDeleteMetric = async () => {
+    if (!deleteMetric) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/marketing-metrics?id=${deleteMetric.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete marketing metric');
+      toast.success('Metric moved to Trash');
+      setDeleteMetric(null);
+      await fetchMetrics();
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error deleting metric');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const weekly = data?.chart.length ? data.chart.map((item) => [item.label, item.spend, item.orders] as const) : [['W1', 0, 0], ['W2', 0, 0], ['W3', 0, 0], ['W4', 0, 0]] as const;
   const topProducts = data?.topProducts ?? [];
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -502,28 +1273,440 @@ function MarketingWorkspace({ data }: { data?: CommerceWorkspaceData['marketing'
         <FinanceKpiCard label="Cost per Order" value={amount(data?.kpis.costPerOrder ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-amber-500" />
         <FinanceKpiCard label="Ad-driven Orders" value={amount(data?.kpis.adOrders ?? 0)} icon={Megaphone} accentClass="border-l-4 border-l-emerald-500" />
       </div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{(data?.insights ?? [{ tone: 'amber' as const, title: 'Marketing data is ready', text: 'Ad spend and order insights will appear after marketing records are added.', action: 'Review ad targeting' }, { tone: 'emerald' as const, title: 'Product conversion data is ready', text: 'Top ad-driven products will appear after product sales are recorded.', action: 'View product campaign' }]).map((insight) => <section key={insight.title} className={`bg-card border-2 ${insight.tone === 'emerald' ? 'border-emerald-300 border-l-emerald-500' : insight.tone === 'red' ? 'border-red-300 border-l-red-500' : 'border-amber-300 border-l-amber-500'} border-l-8 rounded-xl shadow-sm flex flex-col justify-between`}><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3">{insight.tone === 'emerald' ? <TrendingUp className="h-5 w-5 text-emerald-600" /> : <AlertTriangle className={`h-5 w-5 ${insight.tone === 'red' ? 'text-red-600' : 'text-amber-600'}`} />}<h3 className="font-bold text-slate-900 dark:text-slate-100">{insight.title}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{insight.text}</p></div><Button variant={insight.tone === 'emerald' ? 'outline' : 'default'} size="sm" className={`mt-4 h-9 w-fit rounded-lg px-4 text-xs font-bold ${insight.tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : insight.tone === 'red' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-amber-600 text-white hover:bg-amber-700'}`} onClick={() => toast.info(insight.action)}>{insight.action}</Button></div></section>)}</div>
+
+      <SmartSuggestions recommendations={recommendations} isLoading={isRecommendationsLoading} areaFilter="marketing" />
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Ad Spend vs Ad-driven Orders</h2></div><div className="px-6 pb-6"><div className="mb-4 flex items-center justify-center gap-6 text-sm font-semibold text-slate-600"><span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm bg-sky-500" />Ad Spend</span><span className="inline-flex items-center gap-2"><span className="h-1 w-8 bg-emerald-500" />Orders</span></div><div className="relative h-72 w-full"><MarketingPerformanceChart weekly={weekly} /></div></div></section>
-        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800"><div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Top Performing Products (Ad-driven)</h2></div><div className="divide-y-2 divide-slate-100 px-6 dark:divide-slate-900">{topProducts.length ? topProducts.map((product, index) => <div key={product.name} className="flex items-center justify-between gap-4 py-5"><div className="min-w-0"><p className="truncate font-bold text-slate-900 dark:text-slate-100">{index + 1}. {product.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">Ad-attributed product sales</p></div><span className="whitespace-nowrap rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{product.orders} orders</span></div>) : <div className="py-10 text-center text-sm font-semibold text-slate-500">No ad-driven product data yet.</div>}</div></section>
+        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+          <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Ad Spend vs Ad-driven Orders</h2></div>
+          <div className="px-6 pb-6">
+            <div className="mb-4 flex items-center justify-center gap-6 text-sm font-semibold text-slate-600">
+              <span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm bg-sky-500" />Ad Spend</span>
+              <span className="inline-flex items-center gap-2"><span className="h-1 w-8 bg-emerald-500" />Orders</span>
+            </div>
+            <div className="relative h-72 w-full"><MarketingPerformanceChart weekly={weekly} /></div>
+          </div>
+        </section>
+        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+          <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Top Performing Products (Ad-driven)</h2></div>
+          <div className="divide-y-2 divide-slate-100 px-6 dark:divide-slate-900">
+            {topProducts.length ? topProducts.map((product, index) => (
+              <div key={product.name} className="flex items-center justify-between gap-4 py-5">
+                <div className="min-w-0"><p className="truncate font-bold text-slate-900 dark:text-slate-100">{index + 1}. {product.name}</p><p className="mt-1 text-xs font-semibold text-slate-500">Ad-attributed product sales</p></div>
+                <span className="whitespace-nowrap rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{product.orders} orders</span>
+              </div>
+            )) : <div className="py-10 text-center text-sm font-semibold text-slate-500">No ad-driven product data yet.</div>}
+          </div>
+        </section>
       </div>
+
+      {/* Marketing Metrics Table with CRUD */}
+      <section className="overflow-hidden rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+        <div className="border-b-2 border-slate-200 bg-slate-50/70 p-5 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-black text-slate-900 dark:text-slate-100">
+                <Megaphone className="h-5 w-5 text-sky-600" />
+                Marketing Campaigns &amp; Ad Metrics Table
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">Track channel spend, reach, leads, and conversion efficiency.</p>
+            </div>
+            <Button size="sm" className="h-9 bg-sky-600 hover:bg-sky-700 text-white font-bold cursor-pointer" onClick={openAddMetric}>
+              <Plus className="mr-1.5 h-4 w-4" /> Add Campaign Metric
+            </Button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40">
+              <tr>
+                <th className="px-5 py-4">Date</th>
+                <th className="px-5 py-4">Channel</th>
+                <th className="px-5 py-4">Campaign Name</th>
+                <th className="px-5 py-4 text-right">Spend (MMK)</th>
+                <th className="px-5 py-4 text-center">Reach / Impr</th>
+                <th className="px-5 py-4 text-center">Leads</th>
+                <th className="px-5 py-4 text-center">Ad Orders</th>
+                <th className="px-5 py-4 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
+              {isLoadingMetrics ? (
+                <tr><td colSpan={8} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading marketing records...</td></tr>
+              ) : metrics.length > 0 ? (
+                metrics.map((metric) => (
+                  <tr key={metric.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
+                    <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">
+                      {metric.metricDate ? metric.metricDate.slice(0, 10) : '—'}
+                    </td>
+                    <td className="px-5 py-4 font-bold text-xs text-slate-900 dark:text-slate-100">{metric.channel}</td>
+                    <td className="px-5 py-4 text-xs text-slate-600 dark:text-slate-400">{metric.campaignName || '—'}</td>
+                    <td className="whitespace-nowrap px-5 py-4 text-right text-xs font-black text-rose-600 dark:text-rose-400">
+                      {amount(metric.spend)} MMK
+                    </td>
+                    <td className="px-5 py-4 text-center text-xs font-semibold">{amount(metric.reach || metric.impressions || 0)}</td>
+                    <td className="px-5 py-4 text-center text-xs font-semibold text-violet-600">{metric.leads || 0}</td>
+                    <td className="px-5 py-4 text-center text-xs font-black text-emerald-600">{metric.adDrivenOrders || 0}</td>
+                    <td className="px-5 py-4 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700" onClick={() => openEditMetric(metric)}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => setDeleteMetric(metric)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr><td colSpan={8} className="px-6 py-10 text-center text-sm text-slate-500">No marketing records found for this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Metric Add/Edit Dialog */}
+      <Dialog open={metricDialogOpen} onOpenChange={setMetricDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingMetric ? 'Edit Marketing Metric' : 'Record Marketing Metric'}</DialogTitle>
+            <DialogDescription>Record advertising spend, reach, and order attribution.</DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={saveMetric}>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Date</label>
+                <Input type="date" value={metricForm.metricDate} onChange={(e) => setMetricForm({ ...metricForm, metricDate: e.target.value })} required />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Channel</label>
+                <Select value={metricForm.channel} onValueChange={(val) => setMetricForm({ ...metricForm, channel: val ?? 'Facebook' })}>
+                  <SelectTrigger className="text-xs font-bold">{metricForm.channel}</SelectTrigger>
+                  <SelectContent>
+                    {['Facebook', 'TikTok', 'Google', 'Viber', 'Telegram', 'Instagram', 'Other'].map((ch) => (
+                      <SelectItem key={ch} value={ch}>{ch}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Campaign Name</label>
+              <Input value={metricForm.campaignName} onChange={(e) => setMetricForm({ ...metricForm, campaignName: e.target.value })} placeholder="e.g. Summer Promo 2026" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Spend (MMK) *</label>
+                <Input type="number" value={metricForm.spend} onChange={(e) => setMetricForm({ ...metricForm, spend: e.target.value })} placeholder="0" required />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Reach / Impressions</label>
+                <Input type="number" value={metricForm.reach} onChange={(e) => setMetricForm({ ...metricForm, reach: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Leads Generated</label>
+                <Input type="number" value={metricForm.leads} onChange={(e) => setMetricForm({ ...metricForm, leads: e.target.value })} placeholder="0" />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Ad-driven Orders</label>
+                <Input type="number" value={metricForm.adDrivenOrders} onChange={(e) => setMetricForm({ ...metricForm, adDrivenOrders: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Notes</label>
+              <Input value={metricForm.notes} onChange={(e) => setMetricForm({ ...metricForm, notes: e.target.value })} placeholder="Targeting details, notes" />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setMetricDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={isSaving} className="bg-sky-600 hover:bg-sky-700 text-white font-bold">{isSaving ? 'Saving...' : editingMetric ? 'Save Changes' : 'Record Metric'}</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={Boolean(deleteMetric)} onOpenChange={(open) => !open && setDeleteMetric(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this marketing metric?</AlertDialogTitle>
+            <AlertDialogDescription>This metric entry will be moved to Trash.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={isDeleting} className="bg-red-600 text-white hover:bg-red-700 font-bold" onClick={confirmDeleteMetric}>{isDeleting ? 'Deleting...' : 'Move to Trash'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function InventoryWorkspace({ data }: { data?: CommerceWorkspaceData['inventory'] }) {
+// ─── Inventory Workspace with Full CRUD Products Table ──────────────────────
+
+function InventoryWorkspace({ data, recommendations, isRecommendationsLoading }: { data?: CommerceWorkspaceData['inventory']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean }) {
+  const queryClient = useQueryClient();
+  const [productDialogOpen, setProductDialogOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(null);
+  const [deleteProduct, setDeleteProduct] = useState<ProductRecord | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const [productForm, setProductForm] = useState({
+    name: '',
+    sku: '',
+    category: '',
+    sellingPrice: '',
+    unitCost: '',
+    stockQty: '0',
+    lowStockThreshold: '5',
+    description: '',
+  });
+
   const products = data?.products ?? [];
   const outOfStock = products.filter((product) => product.status === 'Out of Stock');
   const wellStocked = products.find((product) => product.status === 'In Stock');
   const statusClass = (status: string) => status === 'In Stock' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : status === 'Low Stock' ? 'border-amber-200 bg-amber-50 text-amber-700' : status === 'Out of Stock' ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-slate-50 text-slate-600';
+
+  const openAddProduct = () => {
+    setEditingProduct(null);
+    setProductForm({
+      name: '',
+      sku: '',
+      category: '',
+      sellingPrice: '',
+      unitCost: '',
+      stockQty: '0',
+      lowStockThreshold: '5',
+      description: '',
+    });
+    setProductDialogOpen(true);
+  };
+
+  const openEditProduct = (prod: ProductRecord) => {
+    setEditingProduct(prod);
+    setProductForm({
+      name: prod.name || '',
+      sku: prod.sku || '',
+      category: prod.category || '',
+      sellingPrice: prod.sellingPrice ? String(prod.sellingPrice) : '',
+      unitCost: prod.unitCost ? String(prod.unitCost) : '',
+      stockQty: String(prod.stockQty ?? 0),
+      lowStockThreshold: String(prod.lowStockThreshold ?? 5),
+      description: prod.description || '',
+    });
+    setProductDialogOpen(true);
+  };
+
+  const saveProduct = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!productForm.name.trim()) {
+      toast.error('Product name is required');
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const payload = {
+        name: productForm.name.trim(),
+        sku: productForm.sku.trim() || null,
+        category: productForm.category.trim() || null,
+        sellingPrice: productForm.sellingPrice ? Number(productForm.sellingPrice) : null,
+        unitCost: productForm.unitCost ? Number(productForm.unitCost) : null,
+        stockQty: Number(productForm.stockQty) || 0,
+        lowStockThreshold: Number(productForm.lowStockThreshold) || 5,
+        description: productForm.description.trim() || null,
+      };
+
+      const res = await fetch('/api/products', {
+        method: editingProduct ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingProduct ? { id: editingProduct.id, ...payload } : payload),
+      });
+
+      if (!res.ok) {
+        const err = (await res.json()) as { message?: string };
+        throw new Error(err.message || 'Failed to save product');
+      }
+      toast.success(editingProduct ? 'Product updated' : 'Product created');
+      setProductDialogOpen(false);
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error saving product');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!deleteProduct) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/products?id=${deleteProduct.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete product');
+      toast.success('Product moved to Trash');
+      setDeleteProduct(null);
+      await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Error deleting product');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"><FinanceKpiCard label="Total Products" value={amount(data?.kpis.totalProducts ?? 0)} icon={Package} accentClass="border-l-4 border-l-sky-500" /><FinanceKpiCard label="Low Stock Items" value={amount(data?.kpis.lowStockItems ?? 0)} icon={AlertTriangle} accentClass="border-l-4 border-l-amber-500" /><FinanceKpiCard label="Out of Stock" value={amount(data?.kpis.outOfStock ?? 0)} icon={Package} accentClass="border-l-4 border-l-red-500" /><FinanceKpiCard label="Inventory Value" value={amount(data?.kpis.inventoryValue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-emerald-500" /></div>
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <section className="bg-card border-2 border-red-300 border-l-8 border-l-red-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><AlertTriangle className="h-5 w-5 text-red-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">{outOfStock.length > 0 ? `${outOfStock.length} product${outOfStock.length === 1 ? ' is' : 's are'} out of stock` : 'No stockouts right now'}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{outOfStock.length > 0 ? `${outOfStock.slice(0, 3).map((product) => product.name).join(', ')} cannot be sold until replenished. Review supplier availability.` : 'Every product has stock available for the next sale.'}</p></div><Button size="sm" className="mt-4 h-9 w-fit rounded-lg bg-red-600 px-4 text-xs font-bold text-white hover:bg-red-700" onClick={() => toast.info('Out-of-stock products selected')}>Review stockouts</Button></div></section>
-        <section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between"><div className="p-5 flex flex-col h-full justify-between"><div><div className="mb-2 flex items-center gap-3"><TrendingUp className="h-5 w-5 text-emerald-600" /><h3 className="font-bold text-slate-900 dark:text-slate-100">{wellStocked ? `${wellStocked.name} is well stocked` : 'Stock levels look stable'}</h3></div><p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">{wellStocked ? `${wellStocked.stockLevel}. It can support the next promotion cycle.` : 'Low-stock alerts will appear when a product crosses its threshold.'}</p></div><Button variant="outline" size="sm" className="mt-4 h-9 w-fit rounded-lg border-emerald-200 bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100" onClick={() => toast.info(wellStocked ? `${wellStocked.name} selected` : 'Inventory overview selected')}>View product</Button></div></section>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <FinanceKpiCard label="Total Products" value={amount(data?.kpis.totalProducts ?? 0)} icon={Package} accentClass="border-l-4 border-l-sky-500" />
+        <FinanceKpiCard label="Low Stock Items" value={amount(data?.kpis.lowStockItems ?? 0)} icon={AlertTriangle} accentClass="border-l-4 border-l-amber-500" />
+        <FinanceKpiCard label="Out of Stock" value={amount(data?.kpis.outOfStock ?? 0)} icon={Package} accentClass="border-l-4 border-l-red-500" />
+        <FinanceKpiCard label="Inventory Value" value={amount(data?.kpis.inventoryValue ?? 0)} unit="MMK" icon={DollarSign} accentClass="border-l-4 border-l-emerald-500" />
       </div>
-      <section className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden"><div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"><div><h2 className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">Product Catalog</h2><p className="mt-1 text-xs text-muted-foreground">Product Code is the internal identifier used to identify each product.</p></div><Button variant="outline" size="sm" className="h-9 text-xs font-bold" onClick={() => toast.info('Product catalog opened')}>View all products</Button></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40"><tr>{['Product', 'Product Code', 'Stock Level', 'Status', 'Actions'].map((heading) => <th key={heading} className={`px-6 py-4 ${heading === 'Actions' ? 'text-center' : 'text-left'}`}>{heading}</th>)}</tr></thead><tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">{products.map((product) => <tr key={product.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50"><td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{product.name}</td><td className="px-6 py-4 text-xs font-bold text-slate-500">{product.productCode}</td><td className="px-6 py-4 text-xs font-semibold text-slate-500">{product.stockLevel}</td><td className="px-6 py-4"><span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${statusClass(product.status)}`}>{product.status.toUpperCase()}</span></td><td className="px-6 py-4"><div className="flex items-center justify-center gap-2"><Button aria-label={`Edit ${product.name}`} variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:text-blue-700" onClick={() => toast.info(`Edit ${product.name}`)}><Pencil className="h-4 w-4" /></Button><Button aria-label={`Delete ${product.name}`} variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => toast.success(`${product.name} moved to Trash`)}><Trash2 className="h-4 w-4" /></Button></div></td></tr>)}{products.length === 0 && <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No products in catalog yet.</td></tr>}</tbody></table></div></section>
+
+      <SmartSuggestions recommendations={recommendations} isLoading={isRecommendationsLoading} areaFilter="inventory" />
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <section className="bg-card border-2 border-red-300 border-l-8 border-l-red-500 rounded-xl shadow-sm flex flex-col justify-between">
+          <div className="p-5 flex flex-col h-full justify-between">
+            <div>
+              <div className="mb-2 flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-red-600" />
+                <h3 className="font-bold text-slate-900 dark:text-slate-100">{outOfStock.length > 0 ? `${outOfStock.length} product${outOfStock.length === 1 ? ' is' : 's are'} out of stock` : 'No stockouts right now'}</h3>
+              </div>
+              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+                {outOfStock.length > 0 ? `${outOfStock.slice(0, 3).map((product) => product.name).join(', ')} cannot be sold until replenished.` : 'Every product has stock available for the next sale.'}
+              </p>
+            </div>
+          </div>
+        </section>
+        <section className="bg-card border-2 border-emerald-300 border-l-8 border-l-emerald-500 rounded-xl shadow-sm flex flex-col justify-between">
+          <div className="p-5 flex flex-col h-full justify-between">
+            <div>
+              <div className="mb-2 flex items-center gap-3">
+                <TrendingUp className="h-5 w-5 text-emerald-600" />
+                <h3 className="font-bold text-slate-900 dark:text-slate-100">{wellStocked ? `${wellStocked.name} is well stocked` : 'Stock levels look stable'}</h3>
+              </div>
+              <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
+                {wellStocked ? `${wellStocked.stockLevel}. It can support the next promotion cycle.` : 'Low-stock alerts will appear when a product crosses its threshold.'}
+              </p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+        <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">Product Catalog Table</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Product Code is the internal identifier used to identify each product.</p>
+          </div>
+          <Button size="sm" className="h-9 bg-sky-600 hover:bg-sky-700 text-white font-bold cursor-pointer" onClick={openAddProduct}>
+            <Plus className="mr-1.5 h-4 w-4" /> Add Product
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b-2 border-slate-200 bg-slate-50/60 text-[10px] font-extrabold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/40">
+              <tr>
+                {['Product', 'Product Code', 'Stock Level', 'Status', 'Actions'].map((heading) => (
+                  <th key={heading} className={`px-6 py-4 ${heading === 'Actions' ? 'text-center' : 'text-left'}`}>{heading}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
+              {products.map((product) => (
+                <tr key={product.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
+                  <td className="px-6 py-4 text-xs font-bold text-slate-900 dark:text-slate-100">{product.name}</td>
+                  <td className="px-6 py-4 text-xs font-bold text-slate-500">{product.productCode || '—'}</td>
+                  <td className="px-6 py-4 text-xs font-semibold text-slate-500">{product.stockLevel}</td>
+                  <td className="px-6 py-4">
+                    <span className={`rounded border-2 px-2.5 py-1 text-[10px] font-extrabold ${statusClass(product.status)}`}>
+                      {product.status.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center justify-center gap-2">
+                      <Button aria-label={`Edit ${product.name}`} variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700" onClick={() => openEditProduct(product as unknown as ProductRecord)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button aria-label={`Delete ${product.name}`} variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" onClick={() => setDeleteProduct(product as unknown as ProductRecord)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {products.length === 0 && <tr><td colSpan={5} className="px-6 py-10 text-center text-sm text-slate-500">No products in catalog yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Product Add/Edit Dialog */}
+      <Dialog open={productDialogOpen} onOpenChange={setProductDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingProduct ? 'Edit Product' : 'Add New Product'}</DialogTitle>
+            <DialogDescription>Add or update product stock, price, and SKU details.</DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={saveProduct}>
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Product Name *</label>
+              <Input value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Product name" required />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">SKU / Product Code</label>
+                <Input value={productForm.sku} onChange={(e) => setProductForm({ ...productForm, sku: e.target.value })} placeholder="SKU-001" />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Category</label>
+                <Input value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} placeholder="Category" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Selling Price (MMK)</label>
+                <Input type="number" value={productForm.sellingPrice} onChange={(e) => setProductForm({ ...productForm, sellingPrice: e.target.value })} placeholder="0" />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Unit Cost (MMK)</label>
+                <Input type="number" value={productForm.unitCost} onChange={(e) => setProductForm({ ...productForm, unitCost: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Stock Quantity</label>
+                <Input type="number" value={productForm.stockQty} onChange={(e) => setProductForm({ ...productForm, stockQty: e.target.value })} placeholder="0" />
+              </div>
+              <div className="grid gap-1.5">
+                <label className="text-xs font-bold">Low Stock Threshold</label>
+                <Input type="number" value={productForm.lowStockThreshold} onChange={(e) => setProductForm({ ...productForm, lowStockThreshold: e.target.value })} placeholder="5" />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Description</label>
+              <Input value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} placeholder="Product notes" />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setProductDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={isSaving} className="bg-sky-600 hover:bg-sky-700 text-white font-bold">{isSaving ? 'Saving...' : editingProduct ? 'Save Changes' : 'Add Product'}</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={Boolean(deleteProduct)} onOpenChange={(open) => !open && setDeleteProduct(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this product?</AlertDialogTitle>
+            <AlertDialogDescription>This product will be moved to Trash.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction disabled={isDeleting} className="bg-red-600 text-white hover:bg-red-700 font-bold" onClick={confirmDeleteProduct}>{isDeleting ? 'Deleting...' : 'Move to Trash'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -563,7 +1746,7 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
   };
   const { data: dashboard } = useCommerceDashboard(dashboardParams, overview);
   const { data: workspaceData } = useCommerceWorkspaces(dashboardParams, !overview);
-  const { data: recommendationsData, isLoading: recsLoading } = useCommerceRecommendations(dashboardParams, overview || workspace === 'finance');
+  const { data: recommendationsData, isLoading: recsLoading } = useCommerceRecommendations(dashboardParams, true);
   const saveTargets = useSaveCommerceTargets();
   const content = {
     overview: ['Business Overview', 'Daily intelligence feed and target pacing.'],
@@ -743,17 +1926,68 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
         </div>
       </header>
 
-      {workspace === 'finance' ? <FinanceWorkspace data={workspaceData?.finance} recommendations={recommendationsData?.recommendations} isRecommendationsLoading={recsLoading} /> : workspace === 'sales' ? <SalesWorkspace data={workspaceData?.sales} /> : workspace === 'marketing' ? <MarketingWorkspace data={workspaceData?.marketing} /> : workspace === 'customers' ? <CustomerServiceView params={dashboardParams} dateFrom={dateFrom} dateTo={dateTo} /> : workspace === 'inventory' ? <InventoryWorkspace data={workspaceData?.inventory} /> : <>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {cards.map(([title, value, target, expected, status, tone, icon, progressPercent]) => <ProgressCard key={title} title={title} value={value} target={target} expected={expected} status={status} tone={tone} icon={icon} progressPercent={progressPercent} />)}
-      </div>
+      {workspace === 'finance' ? (
+        <FinanceWorkspace
+          data={workspaceData?.finance}
+          recommendations={recommendationsData?.recommendations}
+          isRecommendationsLoading={recsLoading}
+          defaultDate={dateFrom}
+        />
+      ) : workspace === 'sales' ? (
+        <SalesWorkspace
+          data={workspaceData?.sales}
+          recommendations={recommendationsData?.recommendations}
+          isRecommendationsLoading={recsLoading}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
+      ) : workspace === 'marketing' ? (
+        <MarketingWorkspace
+          data={workspaceData?.marketing}
+          recommendations={recommendationsData?.recommendations}
+          isRecommendationsLoading={recsLoading}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+        />
+      ) : workspace === 'customers' ? (
+        <CustomerServiceView params={dashboardParams} dateFrom={dateFrom} dateTo={dateTo} />
+      ) : workspace === 'inventory' ? (
+        <InventoryWorkspace
+          data={workspaceData?.inventory}
+          recommendations={recommendationsData?.recommendations}
+          isRecommendationsLoading={recsLoading}
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {cards.map(([title, value, target, expected, status, tone, icon, progressPercent]) => (
+              <ProgressCard
+                key={title}
+                title={title}
+                value={value}
+                target={target}
+                expected={expected}
+                status={status}
+                tone={tone}
+                icon={icon}
+                progressPercent={progressPercent}
+              />
+            ))}
+          </div>
 
-      {!recsLoading && (
-        <SmartSuggestions recommendations={recommendationsData?.recommendations} isLoading={recsLoading} onSetTargets={() => setIsTargetDialogOpen(true)} />
+          <SmartSuggestions
+            recommendations={recommendationsData?.recommendations}
+            isLoading={recsLoading}
+            onSetTargets={() => setIsTargetDialogOpen(true)}
+            areaFilter="general"
+          />
+
+          <BusinessOverviewAnalytics
+            dashboard={dashboard}
+            periodLabel={periodRangeLabel(period, year, month, day, customFrom, customTo)}
+          />
+        </>
       )}
-
-      <BusinessOverviewAnalytics dashboard={dashboard} periodLabel={periodRangeLabel(period, year, month, day, customFrom, customTo)} />
-      </>}
 
       <Dialog open={isTargetDialogOpen} onOpenChange={setIsTargetDialogOpen}>
         <DialogContent showCloseButton={false} className="w-full max-w-md rounded-xl border border-slate-200 bg-card p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto dark:border-slate-800">

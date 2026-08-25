@@ -808,3 +808,173 @@ export const customerFollowupsApi = {
     return request<CustomerFollowupStats>(`/api/customer-followups/stats${qs ? `?${qs}` : ""}`);
   },
 };
+
+// ─── Deals, Marketing, Products APIs ──────────────────────────────────────────
+
+export type DealItem = {
+  id?: string;
+  productId?: string | null;
+  productName: string;
+  sku?: string | null;
+  quantity: number;
+  unitPrice: number;
+  unitCost?: number | null;
+};
+
+export type DealRecord = {
+  id: string;
+  title: string;
+  customerId: string | null;
+  customer?: { id: string; name: string; phone: string | null; email: string | null } | null;
+  stage: "NEW_LEAD" | "QUOTED" | "FOLLOW_UP_NEEDED" | "PENDING" | "WON" | "LOST";
+  quotedAmount: number | null;
+  probability: number;
+  expectedCloseDate: string | null;
+  wonAt: string | null;
+  lostReason: string | null;
+  fulfillmentStatus: "NOT_APPLICABLE" | "PENDING" | "PROCESSING" | "FULFILLED" | "CANCELLED";
+  paymentStatus: "UNPAID" | "PARTIAL" | "PAID";
+  source: string;
+  sourceChannel: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: DealItem[];
+};
+
+export type DealsResponse = {
+  deals: DealRecord[];
+};
+
+export type DealInput = {
+  title: string;
+  customerId?: string | null;
+  stage?: "NEW_LEAD" | "QUOTED" | "FOLLOW_UP_NEEDED" | "PENDING" | "WON" | "LOST";
+  quotedAmount?: number | null;
+  probability?: number;
+  expectedCloseDate?: string | null;
+  wonAt?: string | null;
+  lostReason?: string | null;
+  fulfillmentStatus?: "NOT_APPLICABLE" | "PENDING" | "PROCESSING" | "FULFILLED" | "CANCELLED";
+  paymentStatus?: "UNPAID" | "PARTIAL" | "PAID";
+  source?: string;
+  sourceChannel?: string | null;
+  notes?: string | null;
+  items?: DealItem[];
+};
+
+export const dealsApi = {
+  list: (params: { stage?: string; customerId?: string } = {}) => {
+    const sp = new URLSearchParams();
+    if (params.stage) sp.set("stage", params.stage);
+    if (params.customerId) sp.set("customerId", params.customerId);
+    const qs = sp.toString();
+    return request<DealsResponse>(`/api/deals${qs ? `?${qs}` : ""}`);
+  },
+  create: (data: DealInput) =>
+    request<{ deal: DealRecord }>("/api/deals", { method: "POST", body: data }),
+  update: (id: string, data: Partial<DealInput>) =>
+    request<{ deal: DealRecord }>("/api/deals", { method: "PATCH", body: { id, ...data } }),
+  delete: (id: string, reason?: string) => {
+    const sp = new URLSearchParams({ id });
+    if (reason) sp.set("reason", reason);
+    return request<{ success: boolean }>(`/api/deals?${sp.toString()}`, { method: "DELETE" });
+  },
+};
+
+export type MarketingMetricRecord = {
+  id: string;
+  metricDate: string;
+  channel: string;
+  campaignName: string | null;
+  spend: number;
+  impressions: number | null;
+  reach: number | null;
+  clicks: number | null;
+  leads: number | null;
+  adDrivenOrders: number | null;
+  adDrivenRevenue: number | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MarketingMetricsResponse = {
+  metrics: MarketingMetricRecord[];
+};
+
+export type MarketingMetricInput = {
+  metricDate: string;
+  channel: string;
+  campaignName?: string | null;
+  spend: number;
+  impressions?: number | null;
+  reach?: number | null;
+  clicks?: number | null;
+  leads?: number | null;
+  adDrivenOrders?: number | null;
+  adDrivenRevenue?: number | null;
+  notes?: string | null;
+};
+
+export const marketingMetricsApi = {
+  list: () => request<MarketingMetricsResponse>("/api/marketing-metrics"),
+  create: (data: MarketingMetricInput) =>
+    request<{ metric: MarketingMetricRecord }>("/api/marketing-metrics", { method: "POST", body: data }),
+  update: (id: string, data: Partial<MarketingMetricInput>) =>
+    request<{ metric: MarketingMetricRecord }>("/api/marketing-metrics", { method: "PATCH", body: { id, ...data } }),
+  delete: (id: string, reason?: string) => {
+    const sp = new URLSearchParams({ id });
+    if (reason) sp.set("reason", reason);
+    return request<{ success: boolean }>(`/api/marketing-metrics?${sp.toString()}`, { method: "DELETE" });
+  },
+};
+
+export type ProductRecord = {
+  id: string;
+  name: string;
+  sku: string | null;
+  category: string | null;
+  sellingPrice: number | null;
+  unitCost: number | null;
+  stockQty: number;
+  lowStockThreshold: number;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProductsResponse = {
+  products: ProductRecord[];
+};
+
+export type ProductInput = {
+  name: string;
+  sku?: string | null;
+  category?: string | null;
+  sellingPrice?: number | null;
+  unitCost?: number | null;
+  stockQty?: number;
+  lowStockThreshold?: number;
+  description?: string | null;
+};
+
+export const productsApi = {
+  list: (params: { search?: string; lowStock?: boolean } = {}) => {
+    const sp = new URLSearchParams();
+    if (params.search) sp.set("search", params.search);
+    if (params.lowStock) sp.set("lowStock", "true");
+    const qs = sp.toString();
+    return request<ProductsResponse>(`/api/products${qs ? `?${qs}` : ""}`);
+  },
+  create: (data: ProductInput) =>
+    request<{ product: ProductRecord }>("/api/products", { method: "POST", body: data }),
+  update: (id: string, data: Partial<ProductInput>) =>
+    request<{ product: ProductRecord }>("/api/products", { method: "PATCH", body: { id, ...data } }),
+  delete: (id: string, reason?: string) => {
+    const sp = new URLSearchParams({ id });
+    if (reason) sp.set("reason", reason);
+    return request<{ success: boolean }>(`/api/products?${sp.toString()}`, { method: "DELETE" });
+  },
+};
+

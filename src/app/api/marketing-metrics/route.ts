@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted, softDeleteData } from "@/lib/soft-delete";
@@ -8,8 +9,20 @@ import { NextRequest, NextResponse } from "next/server";
 export async function GET(req: NextRequest) {
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
+
+  const dateFrom = req.nextUrl.searchParams.get("dateFrom");
+  const dateTo = req.nextUrl.searchParams.get("dateTo");
+
+  const where: Prisma.MarketingMetricWhereInput = { ...ownedByUserOrAdmin(session), ...notDeleted };
+  if (dateFrom || dateTo) {
+    where.metricDate = {
+      ...(dateFrom ? { gte: new Date(`${dateFrom}T00:00:00.000Z`) } : {}),
+      ...(dateTo ? { lte: new Date(`${dateTo}T23:59:59.999Z`) } : {}),
+    };
+  }
+
   const metrics = await prisma.marketingMetric.findMany({
-    where: { ...ownedByUserOrAdmin(session), ...notDeleted },
+    where,
     orderBy: { metricDate: "desc" },
   });
   return NextResponse.json({ metrics });
