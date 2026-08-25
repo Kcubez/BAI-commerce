@@ -43,7 +43,7 @@ export async function DELETE(req: NextRequest) {
   if (workspace === "finance") {
     // Finance revenue comes from WON deals, so Delete All must clear both
     // sides of the ledger: expenses and won deals (recoverable via Trash).
-    const [expenses, wonDeals] = await Promise.all([
+    const [expenses, wonDeals, financeEntries] = await Promise.all([
       prisma.expense.updateMany({
         where: {
           ...ownerScope,
@@ -61,8 +61,16 @@ export async function DELETE(req: NextRequest) {
         },
         data,
       }),
+      prisma.financeEntry.updateMany({
+        where: {
+          ...ownerScope,
+          ...notDeleted,
+          ...(dateRange ? { entryDate: dateRange } : {}),
+        },
+        data,
+      }),
     ]);
-    count = expenses.count + wonDeals.count;
+    count = expenses.count + wonDeals.count + financeEntries.count;
   } else {
     const where = {
       ...ownerScope,
