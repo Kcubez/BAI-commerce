@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import {
   answerQuestionWithGemini,
   isFileTooLarge,
+  isSpreadsheetFile,
   parseExcelDate,
   type ParsedDemandRecord,
 } from "@/lib/demand-parser";
@@ -41,7 +42,7 @@ type FinanceRecord = {
   notes: string;
 };
 
-const COMMERCE_REPORT_MODES = ["demand_report", "customer_service", "finance_transactions"] as const;
+const COMMERCE_REPORT_MODES = ["demand_report", "customer_service", "finance_transactions", "inventory_import", "marketing_import"] as const;
 
 function isCommerceReportMode(mode: string | null | undefined) {
   return !!mode && COMMERCE_REPORT_MODES.includes(mode as (typeof COMMERCE_REPORT_MODES)[number]);
@@ -409,6 +410,7 @@ const MAIN_MENU_BUTTONS = {
   inline_keyboard: [
     [{ text: "🤖 Q&A မေးမြန်း", callback_data: "mode:qa" }, { text: "📈 Sales", callback_data: "mode:demand_report" }],
     [{ text: "🎧 Customer Service", callback_data: "mode:customer_service" }, { text: "💳 Finance Transactions", callback_data: "mode:finance_transactions" }],
+    [{ text: "📦 Inventory", callback_data: "mode:inventory_import" }, { text: "📣 Marketing", callback_data: "mode:marketing_import" }],
   ],
 };
 
@@ -439,7 +441,7 @@ function getPlainTemplateTextForMode(mode: string | null | undefined): string {
         "Company:",
         "Phone:",
         "Email:",
-        "Purchased Service:",
+        "Purchased Product:",
         "Purchase Amount MMK:",
         "Status:",
         "Next Follow Up:",
@@ -496,6 +498,8 @@ function buildMainMenuButtons(allowedDepartments: string[]) {
   if (allowedDepartments.includes('Sales')) {
     row1.push({ text: "📈 Sales", callback_data: "mode:demand_report" });
     row2.push({ text: "🎧 Customer Service", callback_data: "mode:customer_service" });
+    row3.push({ text: "📦 Inventory", callback_data: "mode:inventory_import" });
+    row4.push({ text: "📣 Marketing", callback_data: "mode:marketing_import" });
   }
   if (allowedDepartments.includes('Finance')) {
     row2.push({ text: "💳 Finance Transactions", callback_data: "mode:finance_transactions" });
@@ -510,7 +514,7 @@ function buildMainMenuButtons(allowedDepartments: string[]) {
 }
 
 function getDepartmentForMode(mode: string): string | null {
-  if (mode === 'demand_report' || mode === 'customer_service') return 'Sales';
+  if (mode === 'demand_report' || mode === 'customer_service' || mode === 'inventory_import' || mode === 'marketing_import') return 'Sales';
   if (mode === 'finance_transactions') return 'Finance';
   if (mode === 'qa') return 'QA';
   return null;
@@ -688,7 +692,7 @@ function getCustomerServiceFormatPrompt(): string {
     "• Company: [ကုမ္ပဏီအမည်]",
     "• Phone: [ဖုန်းနံပါတ်]",
     "• Email: [email]",
-    "• Purchased Service: [ဝယ်ယူထားသော ဝန်ဆောင်မှု]",
+    "• Purchased Product: [ဝယ်ယူထားသော ပစ္စည်း]",
     "• Purchase Amount MMK: [ငွေ]",
     "• Status: [active / pending / closed]",
     "• Next Follow Up: [YYYY-MM-DD]",
@@ -731,6 +735,46 @@ function getFinanceTransactionsFormatPrompt(): string {
   ].join("\n");
 }
 
+function getInventoryImportFormatPrompt(): string {
+  return [
+    "📦 ━━━━━━━━━━━━━━━━━━━━",
+    "",
+    "  <b>Inventory Import Mode</b>",
+    "  <i>Product Catalog / Stock တင်သွင်းခြင်း</i>",
+    "",
+    "━━━━━━━━━━━━━━━━━━━━",
+    "",
+    "📊 Excel/CSV ဖိုင်ကို တိုက်ရိုက်ပို့ပါ",
+    "",
+    "📋 <b>Excel columns:</b>",
+    "<pre>Product Code | Product Name | Category | Unit Cost | Selling Price | Stock Qty | Low Stock Threshold</pre>",
+    "",
+    "💡 <i>Product Code (SKU) တူပါက အချက်အလက်အသစ်များဖြင့် update လုပ်ပါမည်။</i>",
+    "",
+    "━━━━━━━━━━━━━━━━━━━━",
+  ].join("\n");
+}
+
+function getMarketingImportFormatPrompt(): string {
+  return [
+    "📣 ━━━━━━━━━━━━━━━━━━━━",
+    "",
+    "  <b>Marketing Import Mode</b>",
+    "  <i>ကြော်ငြာစရိတ် / ရလဒ် တင်သွင်းခြင်း</i>",
+    "",
+    "━━━━━━━━━━━━━━━━━━━━",
+    "",
+    "📊 Excel/CSV ဖိုင်ကို တိုက်ရိုက်ပို့ပါ",
+    "",
+    "📋 <b>Excel columns:</b>",
+    "<pre>Date | Channel | Spend | Reach | Impressions | Ad-driven Orders | Notes</pre>",
+    "",
+    "💡 <i>Channel ဥပမာ - Facebook Ads၊ TikTok Ads၊ Viber</i>",
+    "",
+    "━━━━━━━━━━━━━━━━━━━━",
+  ].join("\n");
+}
+
 // Return the full format guide for whatever report mode the sender is in.
 function getFormatPromptForMode(mode: string | null | undefined): string {
   switch (mode) {
@@ -740,6 +784,10 @@ function getFormatPromptForMode(mode: string | null | undefined): string {
       return getFinanceTransactionsFormatPrompt();
     case 'demand_report':
       return getFormatPrompt();
+    case 'inventory_import':
+      return getInventoryImportFormatPrompt();
+    case 'marketing_import':
+      return getMarketingImportFormatPrompt();
     default:
       return [
         "🤖 ━━━━━━━━━━━━━━━━━━━━",
@@ -765,9 +813,13 @@ function getFormatHintFooter(mode: string): string {
   if (mode === 'demand_report') {
     fields = "Date • Customer Name • Phone • Product Name • Product Code • Quantity • Unit Price • Stage • Fulfillment Status • Note";
   } else if (mode === 'customer_service') {
-    fields = "Date • Customer Name • Company • Phone • Email • Purchased Service • Purchase Amount MMK • Status • Next Follow Up • CSAT • Last Contact Note";
+    fields = "Date • Customer Name • Company • Phone • Email • Purchased Product • Purchase Amount MMK • Status • Next Follow Up • CSAT • Last Contact Note";
   } else if (mode === 'finance_transactions') {
     fields = "Date • Description • Category • Type • Amount (MMK) • Payment Method • Reference • Notes";
+  } else if (mode === 'inventory_import') {
+    fields = "Product Code • Product Name • Category • Unit Cost • Selling Price • Stock Qty • Low Stock Threshold";
+  } else if (mode === 'marketing_import') {
+    fields = "Date • Channel • Spend • Reach • Impressions • Ad-driven Orders • Notes";
   }
   return [
     "",
@@ -871,7 +923,7 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
         "",
         "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
         "",
-        "<code>• Date: \n• Customer Name: \n• Company: \n• Phone: \n• Email: \n• Purchased Service: \n• Purchase Amount MMK: \n• Status: \n• Next Follow Up: \n• CSAT: \n• Last Contact Note: </code>",
+        "<code>• Date: \n• Customer Name: \n• Company: \n• Phone: \n• Email: \n• Purchased Product: \n• Purchase Amount MMK: \n• Status: \n• Next Follow Up: \n• CSAT: \n• Last Contact Note: </code>",
       ].join("\n");
     case 'finance_transactions':
       return [
@@ -884,6 +936,30 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
         "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
         "",
         "<code>• Date: \n• Description: \n• Category: \n• Type: \n• Amount (MMK): \n• Payment Method: \n• Reference: \n• Notes: </code>",
+      ].join("\n");
+    case 'inventory_import':
+      return [
+        "📦 ━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "  <b>Inventory Import Template</b>",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "Excel ရဲ့ ပထမဆုံး တစ်ကြောင်း (Row 1) မှာ ကူးထည့်ပါ -",
+        "",
+        "<code>Product Code, Product Name, Category, Unit Cost, Selling Price, Stock Qty, Low Stock Threshold</code>",
+      ].join("\n");
+    case 'marketing_import':
+      return [
+        "📣 ━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "  <b>Marketing Import Template</b>",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "Excel ရဲ့ ပထမဆုံး တစ်ကြောင်း (Row 1) မှာ ကူးထည့်ပါ -",
+        "",
+        "<code>Date, Channel, Spend, Reach, Impressions, Ad-driven Orders, Notes</code>",
       ].join("\n");
     default:
       return [
@@ -1366,6 +1442,8 @@ async function processFileInBackground({
     // Mode-based fallback when header sniffing could not classify the file.
     if (!importKind && activeMode === 'finance_transactions') importKind = 'finance';
     else if (!importKind && activeMode === 'demand_report') importKind = 'sales_orders';
+    else if (!importKind && activeMode === 'inventory_import') importKind = 'product_catalog';
+    else if (!importKind && activeMode === 'marketing_import') importKind = 'marketing_metrics';
 
     try {
       switch (importKind) {
@@ -1716,9 +1794,9 @@ export async function POST(req: NextRequest) {
               "",
               "💬 <b>ဥပမာများ:</b>",
               "",
-              "  • <i>domain / hosting ရက်နီးဆုံးများ?</i>",
-              "  • <i>update ကျန်တဲ့ website ရှိလား?</i>",
-              "  • <i>follow-up လုပ်ရမယ့် customer?</i>",
+              "  • <i>ဒီလမှာ အရောင်းရငွေ ဘယ်လောက်ရှိလဲ?</i>",
+              "  • <i>ပြတ်နေတဲ့ ပစ္စည်း ဘာတွေရှိလဲ?</i>",
+              "  • <i>Follow-up လုပ်ရမယ့် customer ရှိလား?</i>",
               "",
               "━━━━━━━━━━━━━━━━━━━━",
             ].join("\n"),
@@ -1781,6 +1859,42 @@ export async function POST(req: NextRequest) {
             messageId,
             text: getFinanceTransactionsFormatPrompt(),
             replyMarkup: buildFormatInlineButtons('finance_transactions'),
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (data === 'mode:inventory_import') {
+        await prisma.telegramSender.update({
+          where: { id: sender.id },
+          data: { activeReportType: 'inventory_import' },
+        });
+        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Inventory Import selected');
+        if (chatId && messageId) {
+          await editTelegramMessage({
+            botToken: settings?.botToken,
+            chatId: BigInt(chatId),
+            messageId,
+            text: getInventoryImportFormatPrompt(),
+            replyMarkup: buildFormatInlineButtons('inventory_import'),
+          });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      if (data === 'mode:marketing_import') {
+        await prisma.telegramSender.update({
+          where: { id: sender.id },
+          data: { activeReportType: 'marketing_import' },
+        });
+        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Marketing Import selected');
+        if (chatId && messageId) {
+          await editTelegramMessage({
+            botToken: settings?.botToken,
+            chatId: BigInt(chatId),
+            messageId,
+            text: getMarketingImportFormatPrompt(),
+            replyMarkup: buildFormatInlineButtons('marketing_import'),
           });
         }
         return NextResponse.json({ ok: true });
@@ -2320,7 +2434,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      if (!settings?.geminiApiKey || !settings?.botToken) {
+      // Excel/CSV imports are deterministic — they don't need a Gemini key.
+      const spreadsheetUpload = isSpreadsheetFile(fileInfo.mimeType, fileInfo.fileName);
+      if (!settings?.botToken || (!settings?.geminiApiKey && !spreadsheetUpload)) {
         await sendTelegramMessage({
           botToken: settings?.botToken,
           chatId,
@@ -2472,6 +2588,28 @@ export async function POST(req: NextRequest) {
         text: `🤖 ${answer}`,
       });
 
+      return NextResponse.json({ ok: true });
+    }
+
+    // ─── Inventory / Marketing Import Modes (Excel-only) ───────────────
+    if (activeMode === 'inventory_import' || activeMode === 'marketing_import') {
+      const isInventory = activeMode === 'inventory_import';
+      await sendTelegramMessage({
+        botToken: settings?.botToken,
+        chatId,
+        text: [
+          isInventory ? "📦 <b>Inventory Import Mode</b>" : "📣 <b>Marketing Import Mode</b>",
+          "━━━━━━━━━━━━━━━━━━━━",
+          "",
+          "ဒီ mode က <b>Excel/CSV file</b> တင်သွင်းရန်အတွက်သာ ဖြစ်ပါသည်။",
+          "",
+          isInventory
+            ? "📋 Columns: Product Code • Product Name • Category • Unit Cost • Selling Price • Stock Qty • Low Stock Threshold"
+            : "📋 Columns: Date • Channel • Spend • Reach • Impressions • Ad-driven Orders • Notes",
+          "",
+          "ဖိုင်ကို တိုက်ရိုက် attach လုပ်ပြီး ပေးပို့ပါ။ /format နှိပ်ပြီး အသေးစိတ် ကြည့်နိုင်ပါသည်။",
+        ].join("\n"),
+      });
       return NextResponse.json({ ok: true });
     }
 
