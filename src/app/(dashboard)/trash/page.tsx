@@ -41,8 +41,6 @@ const typeLabels: Record<TrashRecordType | "all", string> = {
   deals: "Deals",
   expenses: "Expenses",
   marketing: "Marketing",
-  projects: "Projects / Infra",
-  websites: "Website Updates",
 };
 
 const typeBadgeVariant: Record<TrashRecordType, "default" | "secondary" | "outline" | "destructive"> = {
@@ -53,8 +51,6 @@ const typeBadgeVariant: Record<TrashRecordType, "default" | "secondary" | "outli
   deals: "default",
   expenses: "outline",
   marketing: "secondary",
-  projects: "secondary",
-  websites: "outline",
 };
 
 export default function TrashPage() {
@@ -152,8 +148,6 @@ export default function TrashPage() {
                   <SelectItem value="deals">{typeLabels.deals}</SelectItem>
                   <SelectItem value="expenses">{typeLabels.expenses}</SelectItem>
                   <SelectItem value="marketing">{typeLabels.marketing}</SelectItem>
-                  <SelectItem value="projects">{typeLabels.projects}</SelectItem>
-                  <SelectItem value="websites">{typeLabels.websites}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

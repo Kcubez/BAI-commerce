@@ -12,8 +12,6 @@ const trashTypes = [
   "deals",
   "expenses",
   "marketing",
-  "projects",
-  "websites",
 ] as const;
 
 type TrashType = (typeof trashTypes)[number];
@@ -77,8 +75,6 @@ function scopedWhere(
     case "sales":
       return { sender: { userId: session.user.id } };
     case "finance":
-    case "projects":
-    case "websites":
       return { uploadedByUserId: session.user.id };
     case "products":
     case "deals":
@@ -198,30 +194,6 @@ function serialize(type: TrashType, record: TrashRecord) {
         deletedByUserId: record.deletedByUserId,
         deletedReason: record.deletedReason,
       };
-    case "projects":
-      return {
-        ...restoreRequestMeta,
-        type,
-        id: record.id,
-        title: record.projectName,
-        subtitle: [record.url, record.packageName].filter(Boolean).join(" · ") || "Project / Infra",
-        recordDate: displayDate(record.createdAt),
-        deletedAt: record.deletedAt?.toISOString() ?? null,
-        deletedByUserId: record.deletedByUserId,
-        deletedReason: record.deletedReason,
-      };
-    case "websites":
-      return {
-        ...restoreRequestMeta,
-        type,
-        id: record.id,
-        title: record.name,
-        subtitle: [record.url, record.status].filter(Boolean).join(" · ") || "Website Update",
-        recordDate: displayDate(record.createdAt),
-        deletedAt: record.deletedAt?.toISOString() ?? null,
-        deletedByUserId: record.deletedByUserId,
-        deletedReason: record.deletedReason,
-      };
   }
 }
 
@@ -312,20 +284,6 @@ async function listByType(
       ]);
       return { records: records.map((record) => serialize(type, { ...record, marketingChannel: record.channel, amount: record.spend })), total };
     }
-    case "projects": {
-      const [records, total] = await Promise.all([
-        prisma.projectExpiration.findMany({ where, orderBy: { deletedAt: "desc" }, skip, take }),
-        prisma.projectExpiration.count({ where }),
-      ]);
-      return { records: records.map((record) => serialize(type, record)), total };
-    }
-    case "websites": {
-      const [records, total] = await Promise.all([
-        prisma.websiteUpdate.findMany({ where, orderBy: { deletedAt: "desc" }, skip, take }),
-        prisma.websiteUpdate.count({ where }),
-      ]);
-      return { records: records.map((record) => serialize(type, record)), total };
-    }
   }
 }
 
@@ -358,10 +316,6 @@ async function restoreRecord(
       return prisma.expense.updateMany({ where, data });
     case "marketing":
       return prisma.marketingMetric.updateMany({ where, data });
-    case "projects":
-      return prisma.projectExpiration.updateMany({ where, data });
-    case "websites":
-      return prisma.websiteUpdate.updateMany({ where, data });
   }
 }
 
@@ -387,10 +341,6 @@ async function permanentlyDeleteRecord(type: TrashType, id: string) {
       return prisma.expense.deleteMany({ where });
     case "marketing":
       return prisma.marketingMetric.deleteMany({ where });
-    case "projects":
-      return prisma.projectExpiration.deleteMany({ where });
-    case "websites":
-      return prisma.websiteUpdate.deleteMany({ where });
   }
 }
 
@@ -500,14 +450,6 @@ export async function POST(req: NextRequest) {
             ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.marketingMetric.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
             break;
-          case "projects":
-            ids = (await tx.projectExpiration.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.projectExpiration.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
-            break;
-          case "websites":
-            ids = (await tx.websiteUpdate.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.websiteUpdate.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
-            break;
         }
         if (ids.length > 0) {
           await tx.restoreRequest.updateMany({
@@ -558,12 +500,6 @@ export async function POST(req: NextRequest) {
           break;
         case "marketing":
           records = await prisma.marketingMetric.findMany({ where, select: { id: true } });
-          break;
-        case "projects":
-          records = await prisma.projectExpiration.findMany({ where, select: { id: true } });
-          break;
-        case "websites":
-          records = await prisma.websiteUpdate.findMany({ where, select: { id: true } });
           break;
       }
 
@@ -623,12 +559,6 @@ export async function POST(req: NextRequest) {
         break;
       case "marketing":
         exists = Boolean(await prisma.marketingMetric.findFirst({ where, select: { id: true } }));
-        break;
-      case "projects":
-        exists = Boolean(await prisma.projectExpiration.findFirst({ where, select: { id: true } }));
-        break;
-      case "websites":
-        exists = Boolean(await prisma.websiteUpdate.findFirst({ where, select: { id: true } }));
         break;
     }
 
@@ -736,14 +666,6 @@ export async function DELETE(req: NextRequest) {
           case "marketing":
             ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.marketingMetric.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
-            break;
-          case "projects":
-            ids = (await tx.projectExpiration.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.projectExpiration.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
-            break;
-          case "websites":
-            ids = (await tx.websiteUpdate.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.websiteUpdate.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
             break;
         }
         if (ids.length > 0) {
