@@ -24,15 +24,7 @@ export function useUsers() {
   });
 }
 
-export function useUser(id: string) {
-  return useQuery({
-    queryKey: userKeys.detail(id),
-    queryFn: () => usersApi.get(id),
-    enabled: !!id,
-  });
-}
-
-// ─── Mutations ────────────────────────────────────────────────────────────────
+// ─── Mutations ─────────────────────────────────────────────────────────────────
 
 export function useCreateUser() {
   const queryClient = useQueryClient();

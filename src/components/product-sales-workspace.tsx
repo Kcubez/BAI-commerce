@@ -53,6 +53,8 @@ import type {
   ProductRecord,
 } from '@/lib/api';
 import { commerceDashboardKeys } from '@/hooks/use-commerce-dashboard';
+import { dealsKeys, useDeals } from '@/hooks/use-deals';
+import { marketingMetricKeys, useMarketingMetrics } from '@/hooks/use-marketing-metrics';
 import { trashKeys } from '@/hooks/use-trash';
 import { useDateFilter } from '@/hooks/use-date-filter';
 import { CustomerServiceView } from '@/components/customer-service-view';
@@ -273,8 +275,8 @@ function CommerceLineChart({ data }: { data: { label: string; value: number }[] 
           <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#e2e8f0" strokeDasharray="3 3" className="dark:stroke-slate-800" />
         ))}
         {yLabels.map((value, index) => (
-          <text key={`${value}-${index}`} x="52" y={189 - index * 32} textAnchor="end" className="fill-slate-500 dark:fill-slate-400 font-mono" style={{ fontSize: '9px' }}>
-            {value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value.toLocaleString()}
+          <text key={`${value}-${index}`} x="60" y={189 - index * 32} textAnchor="end" className="fill-slate-500 dark:fill-slate-400 font-mono" style={{ fontSize: '9px' }}>
+            {value.toLocaleString()}
           </text>
         ))}
         {!isEmpty && <path d={`M ${points.split(' ').join(' L ')} L ${chartRight} ${chartBottom} L ${chartLeft} ${chartBottom} Z`} fill="url(#commerceLineGradient)" />}
@@ -860,8 +862,13 @@ function FinanceWorkspace({ data, recommendations, isRecommendationsLoading, def
 
 function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateFrom, dateTo }: { data?: CommerceWorkspaceData['sales']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean; dateFrom?: string; dateTo?: string }) {
   const queryClient = useQueryClient();
-  const [deals, setDeals] = useState<DealRecord[]>([]);
-  const [isLoadingDeals, setIsLoadingDeals] = useState(true);
+  const {
+    data: dealsData,
+    isLoading: isLoadingDeals,
+    isError: isDealsError,
+    refetch: refetchDeals,
+  } = useDeals({ dateFrom, dateTo });
+  const deals = dealsData?.deals ?? [];
   const [stageFilter, setStageFilter] = useState('ALL');
   const [dealSearch, setDealSearch] = useState('');
   const [dealDialogOpen, setDealDialogOpen] = useState(false);
@@ -879,29 +886,6 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
     sourceChannel: 'Direct',
     notes: '',
   });
-
-  const fetchDeals = async () => {
-    setIsLoadingDeals(true);
-    try {
-      const sp = new URLSearchParams();
-      if (dateFrom) sp.set('dateFrom', dateFrom);
-      if (dateTo) sp.set('dateTo', dateTo);
-      const res = await fetch(`/api/deals?${sp.toString()}`);
-      if (res.ok) {
-        const json = (await res.json()) as { deals?: DealRecord[] };
-        setDeals(json.deals || []);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoadingDeals(false);
-    }
-  };
-
-  useEffect(() => {
-    void fetchDeals();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo]);
 
   const openAddDeal = () => {
     setEditingDeal(null);
@@ -961,7 +945,7 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
       if (!res.ok) throw new Error('Failed to save deal');
       toast.success(editingDeal ? 'Deal updated' : 'Deal created');
       setDealDialogOpen(false);
-      await fetchDeals();
+      await queryClient.invalidateQueries({ queryKey: dealsKeys.all });
       await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Error saving deal');
@@ -978,7 +962,7 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
       if (!res.ok) throw new Error('Failed to delete deal');
       toast.success('Deal moved to Trash');
       setDeleteDeal(null);
-      await fetchDeals();
+      await queryClient.invalidateQueries({ queryKey: dealsKeys.all });
       await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Error deleting deal');
@@ -1110,11 +1094,16 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
             <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
               {isLoadingDeals ? (
                 <tr><td colSpan={7} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading deals...</td></tr>
+              ) : isDealsError ? (
+                <tr><td colSpan={7} className="px-6 py-10 text-center text-sm">
+                  <p className="font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load deals. Check your connection and try again.</p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchDeals()}>Retry</Button>
+                </td></tr>
               ) : pagedDeals.length > 0 ? (
                 pagedDeals.map((deal) => (
                   <tr key={deal.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
                     <td className="whitespace-nowrap px-5 py-4 text-xs font-bold text-slate-600 dark:text-slate-400">
-                      {new Date(deal.createdAt).toLocaleDateString()}
+                      {new Date(deal.createdAt).toLocaleDateString(undefined, { timeZone: "UTC" })}
                     </td>
                     <td className="px-5 py-4 text-xs font-semibold text-slate-600 dark:text-slate-400">{deal.customer?.name || '—'}</td>
                     <td className="whitespace-nowrap px-5 py-4 text-right text-xs font-black text-sky-600 dark:text-sky-400">
@@ -1251,8 +1240,13 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
 
 function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, dateFrom, dateTo }: { data?: CommerceWorkspaceData['marketing']; recommendations?: CommerceActionRecommendation[]; isRecommendationsLoading: boolean; dateFrom?: string; dateTo?: string }) {
   const queryClient = useQueryClient();
-  const [metrics, setMetrics] = useState<MarketingMetricRecord[]>([]);
-  const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
+  const {
+    data: metricsData,
+    isLoading: isLoadingMetrics,
+    isError: isMetricsError,
+    refetch: refetchMetrics,
+  } = useMarketingMetrics({ dateFrom, dateTo });
+  const metrics = metricsData?.metrics ?? [];
   const [metricDialogOpen, setMetricDialogOpen] = useState(false);
   const [editingMetric, setEditingMetric] = useState<MarketingMetricRecord | null>(null);
   const [deleteMetric, setDeleteMetric] = useState<MarketingMetricRecord | null>(null);
@@ -1269,29 +1263,6 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
     adDrivenOrders: '',
     notes: '',
   });
-
-  const fetchMetrics = async () => {
-    setIsLoadingMetrics(true);
-    try {
-      const sp = new URLSearchParams();
-      if (dateFrom) sp.set('dateFrom', dateFrom);
-      if (dateTo) sp.set('dateTo', dateTo);
-      const res = await fetch(`/api/marketing-metrics?${sp.toString()}`);
-      if (res.ok) {
-        const json = (await res.json()) as { metrics?: MarketingMetricRecord[] };
-        setMetrics(json.metrics || []);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsLoadingMetrics(false);
-    }
-  };
-
-  useEffect(() => {
-    void fetchMetrics();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo]);
 
   const openAddMetric = () => {
     setEditingMetric(null);
@@ -1352,7 +1323,7 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
       if (!res.ok) throw new Error('Failed to save marketing metric');
       toast.success(editingMetric ? 'Metric updated' : 'Metric recorded');
       setMetricDialogOpen(false);
-      await fetchMetrics();
+      await queryClient.invalidateQueries({ queryKey: marketingMetricKeys.all });
       await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Error saving metric');
@@ -1369,7 +1340,7 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
       if (!res.ok) throw new Error('Failed to delete marketing metric');
       toast.success('Metric moved to Trash');
       setDeleteMetric(null);
-      await fetchMetrics();
+      await queryClient.invalidateQueries({ queryKey: marketingMetricKeys.all });
       await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Error deleting metric');
@@ -1453,6 +1424,11 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
             <tbody className="divide-y-2 divide-slate-100 dark:divide-slate-900">
               {isLoadingMetrics ? (
                 <tr><td colSpan={7} className="px-6 py-8 text-center text-xs text-muted-foreground animate-pulse">Loading marketing records...</td></tr>
+              ) : isMetricsError ? (
+                <tr><td colSpan={7} className="px-6 py-10 text-center text-sm">
+                  <p className="font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load marketing records. Check your connection and try again.</p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchMetrics()}>Retry</Button>
+                </td></tr>
               ) : pagedMetrics.length > 0 ? (
                 pagedMetrics.map((metric) => (
                   <tr key={metric.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">

@@ -71,25 +71,6 @@ export function useUpdateDemandRecord() {
   });
 }
 
-export function useImportDemandFile() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (file: File) => demandRecordsApi.importFile(file),
-    onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ["demand-records"] });
-      queryClient.invalidateQueries({ queryKey: ["demand-record-stats"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
-      toast.success(
-        `Imported ${res.importedCount} row(s). ${res.highPriority} high priority, ${res.missingPhone} missing phone.`,
-      );
-    },
-    onError: (error: unknown) => {
-      toast.error(errorMessage(error, "Failed to import file"));
-    },
-  });
-}
-
 export function useCreateDemandRecord() {
   const queryClient = useQueryClient();
 

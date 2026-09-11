@@ -81,9 +81,14 @@ export async function POST(req: NextRequest) {
     const items = await buildItems(parsed.data.items, session);
     const { customerId, items: _items, ...dealData } = parsed.data;
     void _items;
+    // Manual creates landing directly in WON/LOST get stamped so revenue
+    // attributes to the close month, not the lead month.
+    const now = new Date();
     const deal = await prisma.deal.create({
       data: {
         ...dealData,
+        ...(dealData.stage === "WON" && !dealData.wonAt ? { wonAt: now } : {}),
+        ...(dealData.stage === "LOST" && !dealData.lostAt ? { lostAt: now } : {}),
         user: { connect: { id: session.user.id } },
         ...(customerId ? { customer: { connect: { id: customerId } } } : {}),
         items: { create: items },
@@ -118,10 +123,19 @@ export async function PATCH(req: NextRequest) {
     const items = parsed.data.items ? await buildItems(parsed.data.items, session) : undefined;
     const { customerId, items: _items, ...dealData } = parsed.data;
     void _items;
+    // Attribute revenue to the close month: auto-stamp when a deal moves
+    // into WON/LOST without an explicit date. Moving away keeps history.
+    const now = new Date();
     const deal = await prisma.deal.update({
       where: { id: existing.id },
       data: {
         ...dealData,
+        ...(dealData.stage === "WON" && !existing.wonAt && dealData.wonAt === undefined
+          ? { wonAt: now }
+          : {}),
+        ...(dealData.stage === "LOST" && !existing.lostAt && dealData.lostAt === undefined
+          ? { lostAt: now }
+          : {}),
         ...(customerId === undefined
           ? {}
           : customerId

@@ -24,6 +24,9 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
 
   const res = await fetch(url, {
     method,
+    // Never serve API responses from the browser HTTP cache: stale flags
+    // (e.g. trash permissions) otherwise survive code updates and reloads.
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...headers,
@@ -548,16 +551,6 @@ export type UpdateDemandRecordPayload = {
   serviceQty?: number;
 };
 
-export type DemandImportResponse = {
-  batchId: string;
-  importedCount: number;
-  highPriority: number;
-  missingPhone: number;
-  detectedColumns: string[];
-  columnMapping: Record<string, string>;
-  records: DemandRecord[];
-};
-
 export const demandRecordsApi = {
   list: (params: DemandRecordsParams = {}) => {
     const searchParams = new URLSearchParams();
@@ -591,19 +584,6 @@ export const demandRecordsApi = {
   recommendations: () => request<AIRecommendationsResponse>("/api/demand-records/recommendations"),
   deleteAll: (params: DateRangeParams = {}) =>
     request<{ success: boolean; count: number }>(`/api/demand-records${buildDateRangeQuery(params)}`, { method: "DELETE" }),
-  importFile: async (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    const res = await fetch("/api/demand-records/import", {
-      method: "POST",
-      body: formData,
-    });
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ message: "Import failed" }));
-      throw new Error(error.message || "Import failed");
-    }
-    return res.json() as Promise<DemandImportResponse>;
-  },
 };
 
 // ─── Customers API ───────────────────────────────────────────────────────────
@@ -864,10 +844,12 @@ export type DealInput = {
 };
 
 export const dealsApi = {
-  list: (params: { stage?: string; customerId?: string } = {}) => {
+  list: (params: { stage?: string; customerId?: string; dateFrom?: string; dateTo?: string } = {}) => {
     const sp = new URLSearchParams();
     if (params.stage) sp.set("stage", params.stage);
     if (params.customerId) sp.set("customerId", params.customerId);
+    if (params.dateFrom) sp.set("dateFrom", params.dateFrom);
+    if (params.dateTo) sp.set("dateTo", params.dateTo);
     const qs = sp.toString();
     return request<DealsResponse>(`/api/deals${qs ? `?${qs}` : ""}`);
   },
@@ -918,7 +900,13 @@ export type MarketingMetricInput = {
 };
 
 export const marketingMetricsApi = {
-  list: () => request<MarketingMetricsResponse>("/api/marketing-metrics"),
+  list: (params: { dateFrom?: string; dateTo?: string } = {}) => {
+    const sp = new URLSearchParams();
+    if (params.dateFrom) sp.set("dateFrom", params.dateFrom);
+    if (params.dateTo) sp.set("dateTo", params.dateTo);
+    const qs = sp.toString();
+    return request<MarketingMetricsResponse>(`/api/marketing-metrics${qs ? `?${qs}` : ""}`);
+  },
   create: (data: MarketingMetricInput) =>
     request<{ metric: MarketingMetricRecord }>("/api/marketing-metrics", { method: "POST", body: data }),
   update: (id: string, data: Partial<MarketingMetricInput>) =>
@@ -975,6 +963,117 @@ export const productsApi = {
     const sp = new URLSearchParams({ id });
     if (reason) sp.set("reason", reason);
     return request<{ success: boolean }>(`/api/products?${sp.toString()}`, { method: "DELETE" });
+  },
+};
+
+// ─── Web Data Import API ─────────────────────────────────────────────────────
+// Client-safe mirror of the server import kinds (no xlsx import here — this
+// module ships to the browser).
+
+export type DataImportType =
+  | "sales_orders"
+  | "customer_service"
+  | "finance"
+  | "product_catalog"
+  | "marketing_metrics";
+
+export type DataImportTypeMeta = {
+  value: DataImportType;
+  label: string;
+  description: string;
+  columns: string[];
+};
+
+export const DATA_IMPORT_TYPES: DataImportTypeMeta[] = [
+  {
+    value: "sales_orders",
+    label: "Sales Orders",
+    description: "Customer orders → Sales pipeline (deals + customers)",
+    columns: ["Date", "Customer Name", "Phone", "Product Name", "Product Code", "Quantity", "Unit Price", "Stage", "Fulfillment Status", "Notes"],
+  },
+  {
+    value: "customer_service",
+    label: "Customer Service",
+    description: "Post-purchase follow-ups → Customer Service records",
+    columns: ["Date", "Customer Name", "Company", "Phone", "Email", "Purchased Product", "Purchase Amount (MMK)", "Status", "Next Follow Up", "CSAT", "Last Contact Note"],
+  },
+  {
+    value: "finance",
+    label: "Finance Transactions",
+    description: "Income / expense rows → Finance ledger + expenses",
+    columns: ["Date", "Description", "Category", "Type", "Amount (MMK)", "Payment Method", "Reference", "Notes"],
+  },
+  {
+    value: "product_catalog",
+    label: "Inventory / Products",
+    description: "Product catalog rows → Inventory (upsert by SKU)",
+    columns: ["Product Code", "Product Name", "Category", "Unit Cost", "Selling Price", "Stock Qty", "Low Stock Threshold"],
+  },
+  {
+    value: "marketing_metrics",
+    label: "Marketing Metrics",
+    description: "Ad spend / reach rows → Marketing metrics",
+    columns: ["Date", "Channel", "Spend", "Reach", "Impressions", "Ad-driven Orders", "Notes"],
+  },
+];
+
+export type ImportPreviewRow = Record<string, string | number | null>;
+
+export type ImportPreviewResponse = {
+  fileName: string;
+  fileHash: string;
+  detectedType: DataImportType | null;
+  importType: DataImportType;
+  rowCount: number;
+  truncated: boolean;
+  columns: string[];
+  rows: ImportPreviewRow[];
+};
+
+export type ImportConfirmResponse = {
+  fileName: string;
+  importType: DataImportType;
+  rowCount: number;
+  importedCount: number;
+  skippedCount: number;
+  userSkippedCount: number;
+  invalidSkippedCount: number;
+  duplicateCount: number;
+  restoredCount: number;
+  financeBreakdown?: {
+    expenseCount: number;
+    incomeCount: number;
+  };
+};
+
+async function postImportForm<T>(url: string, formData: FormData): Promise<T> {
+  const res = await fetch(url, { method: "POST", body: formData });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ message: "Import failed" }));
+    throw new Error(error.message || "Import failed");
+  }
+  return res.json() as Promise<T>;
+}
+
+export const importsApi = {
+  preview: (file: File, type?: DataImportType | "auto") => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (type && type !== "auto") formData.append("type", type);
+    return postImportForm<ImportPreviewResponse>("/api/imports/preview", formData);
+  },
+  confirm: (file: File, type: DataImportType, excludedIndices: number[], fileHash?: string) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("type", type);
+    formData.append("excludedIndices", JSON.stringify(excludedIndices));
+    if (fileHash) formData.append("fileHash", fileHash);
+    return postImportForm<ImportConfirmResponse>("/api/imports/confirm", formData);
+  },
+  templateCsv: (type: DataImportType) => {
+    const meta = DATA_IMPORT_TYPES.find((t) => t.value === type);
+    if (!meta) return "";
+    return `${meta.columns.join(",")}\n`;
   },
 };
 

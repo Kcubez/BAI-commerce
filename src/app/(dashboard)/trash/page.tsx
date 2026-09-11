@@ -74,7 +74,7 @@ export default function TrashPage() {
     [dateFrom, dateTo, page, type],
   );
 
-  const { data, isLoading } = useTrash(params);
+  const { data, isLoading, isError, refetch } = useTrash(params);
   const restoreMutation = useRestoreTrashRecord();
   const requestRestoreMutation = useRequestTrashRestore();
   const permanentDeleteMutation = usePermanentDeleteTrashRecord();
@@ -117,18 +117,27 @@ export default function TrashPage() {
   const totalPages = data?.totalPages ?? 1;
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-5 text-slate-950 dark:bg-slate-950 dark:text-slate-50 sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-5">
+    <div className="min-h-[calc(100vh-7rem)] text-slate-950 dark:text-slate-50">
+      <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold tracking-normal">Trash</h1>
+            <h1 className="text-3xl font-bold text-foreground font-heading">Trash</h1>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              Deleted business records stay here until an admin restores or permanently deletes them.
+              Deleted business records stay here until restored. Restore needs admin approval — permanent delete is self-service.
             </p>
           </div>
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-            Permanent delete is admin-only.
-          </div>
+          {canPermanentDelete && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1 rounded-lg border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40 cursor-pointer font-bold"
+              disabled={records.length === 0 || deleteAllMutation.isPending}
+              onClick={() => setShowDeleteAllConfirm(true)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete All
+            </Button>
+          )}
         </div>
 
         <div className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -178,28 +187,20 @@ export default function TrashPage() {
               />
             </div>
 
-            {canRestore && canPermanentDelete && (
+            {canRestore && (
               <div className="flex items-center gap-2 md:ml-auto w-full md:w-auto mt-4 md:mt-0">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 gap-1 rounded-lg border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40 cursor-pointer w-full md:w-auto font-bold"
-                  disabled={records.length === 0 || restoreAllMutation.isPending}
-                  onClick={() => setShowRestoreAllConfirm(true)}
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Restore All
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 gap-1 rounded-lg border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40 cursor-pointer w-full md:w-auto font-bold"
-                  disabled={records.length === 0 || deleteAllMutation.isPending}
-                  onClick={() => setShowDeleteAllConfirm(true)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete All
-                </Button>
+                {canRestore && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 gap-1 rounded-lg border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40 cursor-pointer w-full md:w-auto font-bold"
+                    disabled={records.length === 0 || restoreAllMutation.isPending}
+                    onClick={() => setShowRestoreAllConfirm(true)}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Restore All
+                  </Button>
+                )}
               </div>
             )}
 
@@ -235,6 +236,13 @@ export default function TrashPage() {
                   <TableRow>
                     <TableCell colSpan={5} className="h-40 text-center text-sm text-muted-foreground">
                       Loading deleted records...
+                    </TableCell>
+                  </TableRow>
+                ) : isError ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-56 text-center text-sm">
+                      <p className="font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load trash. Check your connection and try again.</p>
+                      <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetch()}>Retry</Button>
                     </TableCell>
                   </TableRow>
                 ) : records.length === 0 ? (

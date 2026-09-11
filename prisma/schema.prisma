@@ -393,8 +393,9 @@ model Deal {
   deletedAt         DateTime?         @map("deleted_at")
   deletedByUserId   String?           @map("deleted_by_user_id")
   deletedReason     String?           @map("deleted_reason")
-  restoredAt        DateTime?         @map("restored_at")
-  restoredByUserId  String?           @map("restored_by_user_id")
+  restoredAt       DateTime?         @map("restored_at")
+  restoredByUserId String?           @map("restored_by_user_id")
+  importKey        String?           @map("import_key")
 
   items         DealItem[]
   followUpNotes FollowUpNote[]
@@ -404,6 +405,7 @@ model Deal {
   @@index([lastContactAt])
   @@index([fulfillmentStatus])
   @@index([deletedAt])
+  @@unique([userId, importKey])
   @@map("deal")
 }
 
@@ -465,12 +467,14 @@ model Expense {
   deletedAt        DateTime?       @map("deleted_at")
   deletedByUserId  String?         @map("deleted_by_user_id")
   deletedReason    String?         @map("deleted_reason")
-  restoredAt       DateTime?       @map("restored_at")
-  restoredByUserId String?         @map("restored_by_user_id")
+  restoredAt       DateTime? @map("restored_at")
+  restoredByUserId String?   @map("restored_by_user_id")
+  importKey        String?   @map("import_key")
 
   @@index([userId, category])
   @@index([expenseDate])
   @@index([deletedAt])
+  @@unique([userId, importKey])
   @@map("expense")
 }
 
@@ -499,9 +503,11 @@ model FinanceEntry {
   deletedReason    String?   @map("deleted_reason")
   restoredAt       DateTime? @map("restored_at")
   restoredByUserId String?   @map("restored_by_user_id")
+  importKey        String?   @map("import_key")
 
   @@index([userId, entryDate])
   @@index([deletedAt])
+  @@unique([userId, importKey])
   @@map("finance_entry")
 }
 
@@ -539,9 +545,11 @@ model MarketingMetric {
   deletedReason    String?   @map("deleted_reason")
   restoredAt       DateTime? @map("restored_at")
   restoredByUserId String?   @map("restored_by_user_id")
+  importKey        String?   @map("import_key")
 
   @@index([userId, metricDate])
   @@index([deletedAt])
+  @@unique([userId, importKey])
   @@map("marketing_metric")
 }
 

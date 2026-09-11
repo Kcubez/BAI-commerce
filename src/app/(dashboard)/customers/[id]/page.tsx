@@ -59,20 +59,23 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const queryClient = useQueryClient();
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['customer', id],
     queryFn: () => customersApi.get(id),
     refetchInterval: 5000,
     retry: false,
   });
 
-  // If the customer disappears (deleted from another tab) or never existed,
-  // send the user back to the list instead of showing a "not found" page.
+  const isNotFound =
+    error instanceof Error && /not found/i.test(error.message);
+
+  // Deleted elsewhere (or never existed) → back to the list. Transient
+  // failures (network/500) stay on an error card with Retry instead.
   useEffect(() => {
-    if (isError) {
+    if (isError && isNotFound) {
       router.replace('/customers');
     }
-  }, [isError, error, router]);
+  }, [isError, isNotFound, router]);
 
   const deleteCustomer = useMutation({
     mutationFn: () => customersApi.delete(id),
@@ -109,7 +112,16 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   }
 
   if (!data?.customer) {
-    // Briefly shown while the redirect to /customers is in flight.
+    // Briefly shown while the redirect to /customers is in flight, or a
+    // Retry card for transient load failures.
+    if (isError && !isNotFound) {
+      return (
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+          <p className="text-sm font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load customer. Check your connection and try again.</p>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>Retry</Button>
+        </div>
+      );
+    }
     return (
       <div className="text-center text-muted-foreground py-12">Redirecting…</div>
     );
@@ -118,7 +130,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const { customer, timeline } = data;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-h-[calc(100vh-7rem)] space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center gap-4">
         <Link href="/customers">
           <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">

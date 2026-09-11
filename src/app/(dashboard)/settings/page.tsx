@@ -58,7 +58,7 @@ function useBotSettings() {
   return useQuery({
     queryKey: ['bot-settings'],
     queryFn: async (): Promise<BotSettingsData> => {
-      const res = await fetch('/api/settings/bot');
+      const res = await fetch('/api/settings/bot', { cache: "no-store" });
       if (!res.ok) throw new Error('Failed to fetch settings');
       const data = await res.json();
       return data.settings;
@@ -100,7 +100,7 @@ function useSaveBotSettings() {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'bot' | 'senders'>('bot');
-  const { data: settings, isLoading: isSettingsLoading } = useBotSettings();
+  const { data: settings, isLoading: isSettingsLoading, isError: isSettingsError, refetch: refetchSettings } = useBotSettings();
   const saveMutation = useSaveBotSettings();
 
   const [botTokenDraft, setBotTokenDraft] = useState<string | null>(null);
@@ -129,7 +129,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-h-[calc(100vh-7rem)] space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header */}
       <div>
         <div className="flex items-center gap-3 mb-2">
@@ -183,6 +183,12 @@ export default function SettingsPage() {
       {/* Tab Content */}
       {activeTab === 'bot' ? (
         <div className="space-y-6">
+          {isSettingsError && (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border/70 bg-muted/50 p-8 text-center sm:flex-row">
+              <p className="text-sm font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load bot settings. Check your connection and try again.</p>
+              <Button variant="outline" size="sm" onClick={() => void refetchSettings()}>Retry</Button>
+            </div>
+          )}
           {/* Bot Token Card */}
           <Card className="glass-card border-border/70 shadow-sm">
             <CardHeader>

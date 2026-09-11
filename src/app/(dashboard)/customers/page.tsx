@@ -214,7 +214,7 @@ function CustomersPageContent() {
   }
 
   // Queries
-  const { data: customerData, isLoading: customerLoading } = useCustomers({
+  const { data: customerData, isLoading: customerLoading, isError: customerError, refetch: refetchCustomers } = useCustomers({
     search: debouncedCustomerSearch,
     page: customerPage,
     limit: PAGE_SIZE,
@@ -224,7 +224,7 @@ function CustomersPageContent() {
 
   const { data: demandStats, isLoading: demandStatsLoading } = useDemandRecordStats({ dateFrom, dateTo });
 
-  const { data: demandData, isLoading: demandLoading } = useDemandRecords({
+  const { data: demandData, isLoading: demandLoading, isError: demandError, refetch: refetchDemands } = useDemandRecords({
     page: demandPage,
     limit: PAGE_SIZE,
     search: debouncedDemandSearch || undefined,
@@ -236,7 +236,7 @@ function CustomersPageContent() {
   const { data: dashboardStats } = useQuery({
     queryKey: ['dashboard-stats-cs', period, month, year],
     queryFn: async () => {
-      const res = await fetch(`/api/dashboard/stats?period=${period}&month=${month}&year=${year}`);
+      const res = await fetch(`/api/dashboard/stats?period=${period}&month=${month}&year=${year}`, { cache: "no-store" });
       if (!res.ok) throw new Error('Failed to fetch');
       return res.json();
     },
@@ -427,7 +427,7 @@ function CustomersPageContent() {
     : 0;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-h-[calc(100vh-7rem)] space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Page Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border pb-5">
         <div>
@@ -786,6 +786,13 @@ function CustomersPageContent() {
                       </tr>
                     );
                   })
+                ) : customerError ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-12 text-center text-sm">
+                      <p className="font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load customers. Check your connection and try again.</p>
+                      <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchCustomers()}>Retry</Button>
+                    </td>
+                  </tr>
                 ) : (
                   <tr>
                     <td colSpan={6} className="px-6 py-12 text-center text-sm text-slate-500">
@@ -962,6 +969,13 @@ function CustomersPageContent() {
                       </tr>
                     );
                   })
+                ) : demandError ? (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-12 text-center text-sm">
+                      <p className="font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load leads. Check your connection and try again.</p>
+                      <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchDemands()}>Retry</Button>
+                    </td>
+                  </tr>
                 ) : (
                   <tr>
                     <td colSpan={8} className="px-6 py-12 text-center text-sm text-slate-500">

@@ -88,7 +88,7 @@ import { AdminUser } from '@/lib/api';
 import { DestructiveConfirmDialog } from '@/components/ui/destructive-confirm-dialog';
 
 export default function AdminUsersPage() {
-  const { data: users, isLoading } = useUsers();
+  const { data: users, isLoading, isError, refetch } = useUsers();
   const [searchTerm, setSearchTerm] = useState('');
   const deleteUser = useDeleteUser();
   const banUser = useBanUser();
@@ -181,7 +181,7 @@ export default function AdminUsersPage() {
   const totalMessages = users?.reduce((sum, u) => sum + (u.businessOwner?.messageCount ?? 0), 0) ?? 0;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-h-[calc(100vh-7rem)] space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">Business Owners</h1>
@@ -460,6 +460,13 @@ export default function AdminUsersPage() {
                     </TableCell>
                   </TableRow>
                 ))
+              ) : isError ? (
+                <TableRow className="border-border hover:bg-muted/30">
+                  <TableCell colSpan={7} className="text-center py-12">
+                    <p className="font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load users. Check your connection and try again.</p>
+                    <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetch()}>Retry</Button>
+                  </TableCell>
+                </TableRow>
               ) : filteredUsers.length === 0 ? (
                 <TableRow className="border-border hover:bg-muted/30">
                   <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">

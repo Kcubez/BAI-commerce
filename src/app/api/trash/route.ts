@@ -381,7 +381,9 @@ export async function GET(req: NextRequest) {
     limit,
     totalPages: Math.max(1, Math.ceil(total / limit)),
     canRestore: isAdminSession(session),
-    canPermanentDelete: isAdminSession(session),
+    // Any signed-in user may permanently delete their own trashed rows
+    // (single + bulk are scoped server-side); restore stays admin-only.
+    canPermanentDelete: true,
   });
 }
 
@@ -608,13 +610,13 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const session = await auth.api.getSession({ headers: req.headers });
   if (!session) return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-  if (!isAdminSession(session)) {
-    return NextResponse.json({ message: "Admin access required" }, { status: 403 });
-  }
 
   const body = await req.json().catch(() => ({}));
   const { type, id, confirmation, action, dateFrom, dateTo } = body;
 
+  // Bulk path enforces tenancy itself: its loop combines
+  // scopedWhere(t, session) + onlyDeleted + date range, so non-admins can
+  // only ever delete their own trashed rows (admins: everything, as before).
   if (action === "delete_all") {
     if (confirmation !== "PERMANENT DELETE ALL") {
       return NextResponse.json({ message: "Type PERMANENT DELETE ALL to confirm" }, { status: 400 });
@@ -686,6 +688,41 @@ export async function DELETE(req: NextRequest) {
 
   if (!isTrashType(type) || typeof id !== "string") {
     return NextResponse.json({ message: "Invalid trash record" }, { status: 400 });
+  }
+
+  // Non-admins may permanently delete only their own trashed records
+  // (same scoped + onlyDeleted existence check as request_restore).
+  if (!isAdminSession(session)) {
+    const where = { id, ...trashWhere(type, session, null, null) };
+    let exists = false;
+
+    switch (type) {
+      case "customers":
+        exists = Boolean(await prisma.customer.findFirst({ where, select: { id: true } }));
+        break;
+      case "sales":
+        exists = Boolean(await prisma.demandRecord.findFirst({ where, select: { id: true } }));
+        break;
+      case "finance":
+        exists = Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
+        break;
+      case "products":
+        exists = Boolean(await prisma.product.findFirst({ where, select: { id: true } }));
+        break;
+      case "deals":
+        exists = Boolean(await prisma.deal.findFirst({ where, select: { id: true } }));
+        break;
+      case "expenses":
+        exists = Boolean(await prisma.expense.findFirst({ where, select: { id: true } }));
+        break;
+      case "marketing":
+        exists = Boolean(await prisma.marketingMetric.findFirst({ where, select: { id: true } }));
+        break;
+    }
+
+    if (!exists) {
+      return NextResponse.json({ message: "Trash record not found or access denied" }, { status: 404 });
+    }
   }
 
   if (confirmation !== "PERMANENT DELETE") {

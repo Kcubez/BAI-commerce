@@ -117,6 +117,10 @@ function cleanValue(value: string): string {
  * (Myanmar convention) rather than JS's default month-first. Falls back to
  * `Date.parse` for named-month formats like "1 June 2026". Returns null if
  * nothing parses.
+ *
+ * Wall-clock dates are stored as UTC midnight so period filters (which
+ * compare in UTC) bucket rows on the intended calendar day regardless of
+ * the server's local timezone. Convert to Asia/Yangon only for display.
  */
 function parseHumanDate(value: string): Date | null {
   const str = value.trim();
@@ -127,7 +131,7 @@ function parseHumanDate(value: string): Date | null {
     const month = parseInt(numeric[2], 10);
     const year = parseInt(numeric[3], 10);
     if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const d = new Date(year, month - 1, day);
+      const d = new Date(Date.UTC(year, month - 1, day));
       if (!isNaN(d.getTime())) return d;
     }
   }

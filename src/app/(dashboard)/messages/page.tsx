@@ -58,7 +58,7 @@ export default function MessagesPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  const { data: messagesData, isLoading: messagesLoading } = useMessages({
+  const { data: messagesData, isLoading: messagesLoading, isError: messagesError, refetch: refetchMessages } = useMessages({
     page: 1, // Always load page 1, expanding the list in-place via limit
     limit,
     search: debouncedSearch || undefined,
@@ -126,7 +126,7 @@ export default function MessagesPage() {
   ];
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="min-h-[calc(100vh-7rem)] space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -250,6 +250,11 @@ export default function MessagesPage() {
               Array.from({ length: 5 }).map((_, i) => (
                 <MessageSkeleton key={i} />
               ))
+            ) : messagesError ? (
+              <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border/70 bg-muted/50 p-10 text-center">
+                <p className="text-sm font-semibold text-red-600 dark:text-red-400">Couldn&apos;t load messages. Check your connection and try again.</p>
+                <Button variant="outline" size="sm" onClick={() => void refetchMessages()}>Retry</Button>
+              </div>
             ) : messagesData && messagesData.messages.length > 0 ? (
               messagesData.messages.map((message) => (
                 <div

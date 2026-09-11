@@ -18,6 +18,7 @@ import {
   Database,
   Wallet,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -145,6 +146,7 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
       label: 'Operations',
       items: [
         { title: 'Data Feed', href: '/data-feed', icon: MessageSquare, adminOnly: false },
+        { title: 'Data Import', href: '/import', icon: Upload, adminOnly: false },
         { title: 'Trash', href: '/trash', icon: Trash2, adminOnly: false },
       ],
     },

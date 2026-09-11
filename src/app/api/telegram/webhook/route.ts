@@ -5,7 +5,6 @@ import {
   answerQuestionWithGemini,
   isFileTooLarge,
   isSpreadsheetFile,
-  parseExcelDate,
   type ParsedDemandRecord,
 } from "@/lib/demand-parser";
 import { analyzeDemandRecord } from "@/lib/demand-analysis";
@@ -33,124 +32,19 @@ import { sendOTPEmail } from "@/lib/email";
 import { notDeleted, restoreData } from "@/lib/soft-delete";
 import { formatPhoneNumber } from "@/lib/utils";
 import type { TelegramSender } from "@/generated/prisma/client";
-import { ExpenseCategory, type ExpenseCategory as ExpenseCategoryValue } from "@/generated/prisma/enums";
-
-type FinanceRecord = {
-  date: Date;
-  description: string;
-  category: string;
-  type: string;
-  amount: number;
-  paymentMethod: string;
-  reference: string;
-  notes: string;
-  accountingType: string;
-  status: string;
-  counterparty: string;
-  dueDate: Date | null;
-};
+import {
+  createFinanceRecord,
+  isFinanceRecordsHeaders,
+  parseFinanceRecordsSpreadsheet,
+  parseFinanceTextRecord,
+  type FinanceRecord,
+} from "@/lib/finance-import";
+import { fingerprintImportRows, sha256Hex } from "@/lib/data-import";
 
 const COMMERCE_REPORT_MODES = ["demand_report", "customer_service", "finance_transactions", "inventory_import", "marketing_import"] as const;
 
 function isCommerceReportMode(mode: string | null | undefined) {
   return !!mode && COMMERCE_REPORT_MODES.includes(mode as (typeof COMMERCE_REPORT_MODES)[number]);
-}
-
-function normalizeFinanceCategory(category: string | null | undefined): ExpenseCategoryValue {
-  const value = (category || "").toLowerCase();
-  if (/marketing|ad|ads|facebook|google|campaign/.test(value)) return ExpenseCategory.MARKETING_AND_ADS;
-  if (/logistic|delivery|fulfillment|shipping|courier/.test(value)) return ExpenseCategory.LOGISTICS_AND_FULFILLMENT;
-  if (/platform|transaction|fee|payment|kpay|bank/.test(value)) return ExpenseCategory.PLATFORM_AND_TRANSACTION_FEES;
-  if (/staff|salary|payroll|wage/.test(value)) return ExpenseCategory.STAFFING;
-  if (/cogs|cost|inventory|stock|product|purchase|supplier/.test(value)) return ExpenseCategory.COGS;
-  if (/return|refund|loss|damage/.test(value)) return ExpenseCategory.RETURNS_REFUNDS_AND_LOSS;
-  if (/operation|admin|office|rent|utility|overhead/.test(value)) return ExpenseCategory.OPERATIONS_AND_OVERHEAD;
-  return ExpenseCategory.MISCELLANEOUS;
-}
-
-function normalizeAccountingType(value: string | null | undefined, cashType: string) {
-  const raw = (value || "").toLowerCase();
-  if (/salary|payroll|wage/.test(raw)) return "salary";
-  if (/cogs|cost of goods|inventory/.test(raw)) return "cogs";
-  if (/receiv/.test(raw)) return "receivable";
-  if (/debt|loan|liabilit/.test(raw)) return "debt";
-  if (/voucher/.test(raw)) return "voucher";
-  if (/capital|investment/.test(raw)) return "owner_capital";
-  if (/payment/.test(raw)) return "payment";
-  return cashType.toLowerCase() === "income" ? "payment" : "operating_expense";
-}
-
-function parseFinanceTextRecord(text: string, fallbackDate: Date): FinanceRecord {
-  const cleaned = text.replace(/[၀-၉]/g, (digit) => String("၀၁၂၃၄၅၆၇၈၉".indexOf(digit))).replace(/,/g, "");
-  const field = (names: string[]) => {
-    for (const name of names) {
-      const match = cleaned.match(new RegExp(`${name}\\s*[:：]\\s*([^\\n]+)`, "i"));
-      if (match?.[1]?.trim()) return match[1].trim();
-    }
-    return "";
-  };
-  const rawDate = field(["Date", "ရက်စွဲ"]);
-  const rawType = field(["Type", "အမျိုးအစား"]);
-  const rawAmount = field(["Amount \\(MMK\\)", "Amount", "ငွေပမာဏ"]);
-  const amount = Number(rawAmount.match(/\d+(?:\.\d+)?/)?.[0] || 0);
-  const lower = cleaned.toLowerCase();
-  const inferredType = rawType || (/income|revenue|sale|ရောင်း|ဝင်ငွေ/.test(lower) ? "Income" : "Expense");
-
-  return {
-    date: parseExcelDate(rawDate) || fallbackDate,
-    description: field(["Description", "အကြောင်းအရာ"]) || text.slice(0, 120),
-    category: field(["Category", "အမျိုးအစား"]) || "Miscellaneous",
-    type: /income|revenue|ဝင်ငွေ/i.test(inferredType) ? "Income" : "Expense",
-    amount: Number.isFinite(amount) ? amount : 0,
-    paymentMethod: field(["Payment Method", "Method"]) || "Unknown",
-    reference: field(["Reference", "Ref"]) || "",
-    notes: field(["Notes", "Note", "မှတ်ချက်"]) || "",
-    accountingType: field(["Accounting Type", "Account Type"]) || "",
-    status: field(["Status"]) || "recorded",
-    counterparty: field(["Counterparty", "Vendor"]) || "",
-    dueDate: parseExcelDate(field(["Due Date"])) || null,
-  };
-}
-
-async function createFinanceRecord({
-  record,
-  userId,
-  sourceMessageId,
-}: {
-  record: FinanceRecord;
-  userId: string;
-  sourceMessageId?: string | null;
-}) {
-  if (record.amount <= 0) return null;
-
-  await prisma.financeEntry.create({ data: {
-    userId, entryDate: record.date, cashType: record.type.toLowerCase() === "income" ? "Income" : "Expense",
-    accountingType: normalizeAccountingType(record.accountingType || record.category, record.type), title: record.description || record.category || "Finance record",
-    amount: record.amount, status: record.status || "recorded", counterparty: record.counterparty || null,
-    dueDate: record.dueDate, voucherNumber: record.reference || null, paymentMethod: record.paymentMethod || null, notes: record.notes || null,
-  }});
-
-  if (record.type.toLowerCase() === "income") {
-    // Ledger-only: income rows (sales summaries, receivables, vouchers, owner
-    // capital) are accounting records, NOT sales. Revenue comes from actual
-    // order deals (sales_orders import / CS import) so the ledger never
-    // double-counts or inflates Revenue with capital injections.
-    return null;
-  }
-
-  return prisma.expense.create({
-    data: {
-      userId,
-      category: normalizeFinanceCategory(record.category),
-      subcategory: record.category || record.description,
-      amount: record.amount,
-      expenseDate: record.date,
-      vendor: record.paymentMethod || null,
-      note: [record.description, record.notes, record.reference ? `Ref: ${record.reference}` : "", sourceMessageId ? `Telegram message: ${sourceMessageId}` : ""]
-        .filter(Boolean)
-        .join(" · "),
-    },
-  });
 }
 
 function displayNameFromTelegramUser(from: { first_name?: string; last_name?: string }) {
@@ -847,85 +741,6 @@ function getFormatHintFooter(mode: string): string {
   ].join("\n");
 }
 
-function isFinanceRecordsHeaders(headers: string[]): boolean {
-  const normalized = headers.map(h => String(h || '').trim().toLowerCase());
-  return (
-    normalized.includes('type') &&
-    (normalized.includes('amount_mmk') || normalized.includes('amount (mmk)') || normalized.includes('amount')) &&
-    (normalized.includes('description') || normalized.includes('category'))
-  );
-}
-
-
-function parseFinanceRecordsSpreadsheet(fileBuffer: Buffer): FinanceRecord[] {
-  const workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: true });
-  const allRecords: FinanceRecord[] = [];
-  for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { raw: true });
-    for (const row of rows) {
-      const getVal = (keys: string[]) => {
-        const normalize = (s: string) => s.toLowerCase().trim().replace(/[_-]+/g, ' ');
-        for (const k of keys) {
-          const normalizedK = normalize(k);
-          const matchedKey = Object.keys(row).find(
-            rk => normalize(rk) === normalizedK
-          );
-          if (matchedKey !== undefined) return row[matchedKey];
-        }
-        return null;
-      };
-
-      const dateVal = getVal(['Date', 'date']);
-      const dateObj = parseExcelDate(dateVal) || new Date();
-
-      const desc = String(getVal(['Description', 'description', 'desc']) || '').trim();
-      const category = String(getVal(['Category', 'category', 'cat']) || '').trim();
-      const type = String(getVal(['Type', 'type']) || '').trim();
-      const amountVal = getVal(['Amount (MMK)', 'amount_mmk', 'amount']);
-      
-      let amount = 0;
-      if (amountVal != null) {
-        const clean = String(amountVal).replace(/[\u1040-\u1049]/g, (d) => {
-          const digits: Record<string, string> = {
-            '\u1040': '0', '\u1041': '1', '\u1042': '2', '\u1043': '3', '\u1044': '4',
-            '\u1045': '5', '\u1046': '6', '\u1047': '7', '\u1048': '8', '\u1049': '9',
-          };
-          return digits[d] || d;
-        }).replace(/,/g, '');
-        const n = parseFloat(clean);
-        if (!isNaN(n)) amount = n;
-      }
-
-      const payMethod = String(getVal(['Payment Method', 'payment_method']) || '').trim();
-      const ref = String(getVal(['Reference', 'reference']) || '').trim();
-      const notes = String(getVal(['Notes', 'notes', 'note']) || '').trim();
-      const accountingType = String(getVal(['Accounting Type', 'accounting_type', 'account type']) || '').trim();
-      const status = String(getVal(['Status', 'status']) || '').trim();
-      const counterparty = String(getVal(['Counterparty', 'counterparty', 'vendor']) || '').trim();
-      const dueDate = parseExcelDate(getVal(['Due Date', 'due_date'])) || null;
-
-      if (!type) continue;
-
-      allRecords.push({
-        date: dateObj,
-        description: desc,
-        category,
-        type,
-        amount,
-        paymentMethod: payMethod,
-        reference: ref,
-        notes,
-        accountingType,
-        status,
-        counterparty,
-        dueDate,
-      });
-    }
-  }
-  return allRecords;
-}
-
 function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
   switch (mode) {
     case 'demand_report':
@@ -1459,11 +1274,14 @@ async function processFileInBackground({
         const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1 });
         if (rows.length > 0 && Array.isArray(rows[0])) {
           const headers = rows[0].map(h => String(h || ''));
-          if (isFinanceRecordsHeaders(headers)) importKind = 'finance';
-          else if (isProductCatalogHeaders(headers)) importKind = 'product_catalog';
-          else if (isMarketingMetricsHeaders(headers)) importKind = 'marketing_metrics';
+          // Most-specific first: CS before sales (a CS sheet with order
+          // columns would otherwise match sales and lose CSAT/follow-up
+          // data); finance last as the least-specific fallback.
+          if (isCustomerServiceHeaders(headers)) importKind = 'customer_service';
           else if (isSalesOrdersHeaders(headers)) importKind = 'sales_orders';
-          else if (isCustomerServiceHeaders(headers)) importKind = 'customer_service';
+          else if (isMarketingMetricsHeaders(headers)) importKind = 'marketing_metrics';
+          else if (isProductCatalogHeaders(headers)) importKind = 'product_catalog';
+          else if (isFinanceRecordsHeaders(headers)) importKind = 'finance';
         }
       }
     } catch (err) {
@@ -1525,23 +1343,62 @@ async function processFileInBackground({
     }
 
     let createdCount = 0;
+    let duplicateCount = 0;
+    let restoredCount = 0;
+    let skippedCount = 0;
+    let financeExpenseCount = 0;
+    let financeIncomeCount = 0;
+    // Stable per-row keys so re-processing the same file (retry,
+    // re-upload — same bytes, same keys) skips already-imported rows
+    // instead of duplicating them. The telegram channel namespace keeps
+    // these keys isolated from web imports of the same file.
+    const tgKeys = (rows: unknown[]) =>
+      fingerprintImportRows({ channel: "telegram", channelRef: sha256Hex(downloadedBuffer), kind: importKind!, rows });
     if (importKind === 'finance') {
-      const created = await Promise.all(parsedFinanceRecords.map((rec) => createFinanceRecord({
+      const financeKeys = tgKeys(parsedFinanceRecords);
+      const outcomes = await Promise.all(parsedFinanceRecords.map((rec, idx) => createFinanceRecord({
         record: rec,
         userId: settings.userId!,
         sourceMessageId: telegramMessageId,
+        importKey: financeKeys[idx],
       })));
-      createdCount = created.filter(Boolean).length;
+      financeExpenseCount = outcomes.filter((o) => o === "expense").length;
+      financeIncomeCount = outcomes.filter((o) => o === "ledger").length;
+      duplicateCount = outcomes.filter((o) => o === "duplicate").length;
+      restoredCount = outcomes.filter((o) => o === "restored").length;
+      skippedCount = outcomes.filter((o) => o === "skipped").length;
+      createdCount = financeExpenseCount + financeIncomeCount;
     } else if (importKind === 'product_catalog') {
-      createdCount = await upsertProductsFromRows(parsedProductRows, settings.userId);
+      const res = await upsertProductsFromRows(parsedProductRows, settings.userId);
+      createdCount = res.imported;
+      duplicateCount = res.duplicates;
+      restoredCount = res.restored;
     } else if (importKind === 'marketing_metrics') {
-      createdCount = await createMarketingMetricsFromRows(parsedMarketingRows, settings.userId);
+      const res = await createMarketingMetricsFromRows(parsedMarketingRows, settings.userId, tgKeys(parsedMarketingRows));
+      createdCount = res.imported;
+      duplicateCount = res.duplicates;
+      restoredCount = res.restored;
     } else if (importKind === 'sales_orders') {
-      createdCount = await createSalesOrdersFromRows(parsedSalesRows, settings.userId);
+      const res = await createSalesOrdersFromRows(parsedSalesRows, settings.userId, undefined, tgKeys(parsedSalesRows));
+      createdCount = res.imported;
+      duplicateCount = res.duplicates;
+      restoredCount = res.restored;
     } else if (importKind === 'customer_service') {
-      createdCount = await createCustomerServiceRecordsFromRows(parsedCsRows, settings.userId);
+      const res = await createCustomerServiceRecordsFromRows(parsedCsRows, settings.userId, undefined, tgKeys(parsedCsRows));
+      createdCount = res.imported;
+      duplicateCount = res.duplicates;
+      restoredCount = res.restored;
     }
 
+    const duplicateNote = duplicateCount > 0
+      ? `\n🔁 <b>ထပ်နေသော:</b> <code>${duplicateCount}</code> စောင် ကျော်သွားပါသည်။`
+      : "";
+    const restoredNote = restoredCount > 0
+      ? `\n♻️ <b>ပြန်လည်ရရှိသော:</b> <code>${restoredCount}</code> စောင် Trash မှ ပြန်ပေါ်လာပါသည်။`
+      : "";
+    const skippedNote = skippedCount > 0
+      ? `\n⏭️ <b>ကျော်သွားသော (amount 0):</b> <code>${skippedCount}</code> စောင် မသိမ်းဆည်းပါ။`
+      : "";
     const successTitle: Record<ImportKind, string> = {
       finance: "✅ <b>ဘဏ္ဍာရေး ငွေသွင်း/ငွေထုတ် မှတ်တမ်းများ တင်သွင်းပြီးပါပြီ</b>",
       product_catalog: "✅ <b>Product Catalog / Inventory တင်သွင်းပြီးပါပြီ</b>",
@@ -1550,11 +1407,11 @@ async function processFileInBackground({
       customer_service: "✅ <b>Customer Service မှတ်တမ်းများ တင်သွင်းပြီးပါပြီ</b>",
     };
     const successBody: Record<ImportKind, string> = {
-      finance: `📊 <b>အရေအတွက်:</b> <code>${createdCount}</code> စောင်ကို Commerce Finance ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
-      product_catalog: `📦 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Inventory ထဲသို့ update လုပ်ပြီးပါပြီ။`,
-      marketing_metrics: `📈 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Marketing Metrics ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
-      sales_orders: `🛒 <b>အရေအတွက်:</b> <code>${createdCount}</code> orders ကို Sales module ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
-      customer_service: `🎧 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Customer Service ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။`,
+      finance: `📊 <b>အရေအတွက်:</b> <code>${createdCount}</code> စောင် (Expense <code>${financeExpenseCount}</code> · Income <code>${financeIncomeCount}</code>) ကို Commerce Finance ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။${duplicateNote}${restoredNote}${skippedNote}`,
+      product_catalog: `📦 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Inventory ထဲသို့ update လုပ်ပြီးပါပြီ။${duplicateNote}${restoredNote}`,
+      marketing_metrics: `📈 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Marketing Metrics ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။${duplicateNote}${restoredNote}`,
+      sales_orders: `🛒 <b>အရေအတွက်:</b> <code>${createdCount}</code> orders ကို Sales module ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။${duplicateNote}${restoredNote}`,
+      customer_service: `🎧 <b>အရေအတွက်:</b> <code>${createdCount}</code> ခုကို Customer Service ထဲသို့ မှတ်တမ်းတင်ပြီးပါပြီ။${duplicateNote}${restoredNote}`,
     };
 
     if (progressMsgId) {
@@ -2567,7 +2424,6 @@ export async function POST(req: NextRequest) {
     }
 
     const receivedAt = new Date(message.date * 1000);
-    const receivedAtMyanmar = new Date(receivedAt.getTime() + 6.5 * 60 * 60 * 1000);
     const updatedSender = await prisma.telegramSender.update({
       where: { id: sender.id },
       data: {
@@ -2679,17 +2535,31 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      const parsed = parseFinanceTextRecord(message.text, receivedAtMyanmar);
-      await createFinanceRecord({
+      const parsed = parseFinanceTextRecord(message.text, receivedAt);
+      const outcome = await createFinanceRecord({
         record: parsed,
         userId: settings.userId,
         sourceMessageId: telegramMessage.id,
       });
 
+      if (outcome === "skipped") {
+        await sendTelegramMessage({
+          botToken: settings?.botToken,
+          chatId,
+          text: [
+            "⚠️ <b>မှတ်တမ်း မသိမ်းဆည်းပါ</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "Amount 0 (သို့မဟုတ်) ငွေပမာဏ မပါဝင်သောကြောင့် သိမ်းဆည်းခြင်း မပြုပါ။",
+            "ငွေပမာဏ ထည့်ပြီး ပြန်ပို့ပေးပါ။",
+          ].join("\n"),
+        });
+        return NextResponse.json({ ok: true });
+      }
+
       const confirmParts = [
         "✅ <b>ဘဏ္ဍာရေး ငွေသွင်း/ငွေထုတ် မှတ်တမ်း တင်သွင်းခြင်း အောင်မြင်ပါသည်</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        `📅 <b>ရက်စွဲ:</b> <code>${parsed.date.toISOString().slice(0, 10)}</code>`,
+        `📅 <b>ရက်စွဲ:</b> <code>${(parsed.date || receivedAt).toISOString().slice(0, 10)}</code>`,
         `🏷️ <b>Type:</b> <code>${parsed.type}</code>`,
         `📂 <b>Category:</b> <code>${parsed.category}</code>`,
         `💵 <b>Amount:</b> <code>${parsed.amount.toLocaleString()} MMK</code>`,

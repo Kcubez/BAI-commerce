@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import { DealStage, FulfillmentStatus } from "@/generated/prisma/enums";
 import type { DealStage as DealStageValue, FulfillmentStatus as FulfillmentStatusValue } from "@/generated/prisma/enums";
 import { parseExcelDate } from "@/lib/demand-parser";
@@ -53,9 +54,11 @@ export function isSalesOrdersHeaders(headers: unknown[]): boolean {
   );
 }
 
-// CS sheets share "Customer Name" with sales sheets, so this must be checked
-// AFTER isSalesOrdersHeaders. CS-specific markers: Next Follow Up / CSAT /
-// Purchased Product / Last Contact Note.
+// CS sheets share "Customer Name" with sales sheets, so callers must check
+// this BEFORE isSalesOrdersHeaders: a CS sheet with order columns would
+// otherwise match sales and lose CSAT/follow-up data. Known tradeoff — a
+// hybrid sheet (order columns + CSAT) routes to CS and drops quantity/price;
+// pick the type manually in that case.
 export function isCustomerServiceHeaders(headers: unknown[]): boolean {
   const h = headers.map(normalizeHeaderKey);
   if (!h.includes("customer name")) return false;
@@ -146,9 +149,41 @@ export function parseProductCatalogRows(fileBuffer: Buffer): ParsedProductRow[] 
   return parsed;
 }
 
-export async function upsertProductsFromRows(rows: ParsedProductRow[], userId: string): Promise<number> {
-  let count = 0;
+export async function upsertProductsFromRows(
+  rows: ParsedProductRow[],
+  userId: string,
+): Promise<ImportWriteResult> {
+  if (rows.length === 0) return { imported: 0, duplicates: 0, restored: 0 };
+
+  // Partition first so resurrected SKUs report as restored, not imported.
+  const skus = Array.from(new Set(rows.map((p) => p.sku)));
+  const existing = await prisma.product.findMany({
+    where: { userId, sku: { in: skus } },
+    select: { sku: true, deletedAt: true },
+  });
+  const stateBySku = new Map(existing.map((e) => [e.sku, e.deletedAt ? "deleted" : "live"] as const));
+  let imported = 0;
+  let duplicates = 0;
+  let restored = 0;
+
   for (const product of rows) {
+    const state = stateBySku.get(product.sku);
+    if (state === "live") {
+      // Refresh values in place; nothing new and nothing resurrected.
+      await prisma.product.update({
+        where: { userId_sku: { userId, sku: product.sku } },
+        data: {
+          ...(product.name ? { name: product.name } : {}),
+          ...(product.category ? { category: product.category } : {}),
+          ...(product.unitCost !== null ? { unitCost: product.unitCost } : {}),
+          ...(product.sellingPrice !== null ? { sellingPrice: product.sellingPrice } : {}),
+          stockQty: product.stockQty,
+          lowStockThreshold: product.lowStockThreshold,
+        },
+      });
+      duplicates += 1;
+      continue;
+    }
     await prisma.product.upsert({
       where: { userId_sku: { userId, sku: product.sku } },
       create: {
@@ -171,15 +206,18 @@ export async function upsertProductsFromRows(rows: ParsedProductRow[], userId: s
         lowStockThreshold: product.lowStockThreshold,
       },
     });
-    count += 1;
+    if (state === "deleted") restored += 1;
+    else imported += 1;
+    // A second row with the same SKU in this file is a duplicate, not new.
+    stateBySku.set(product.sku, "live");
   }
-  return count;
+  return { imported, duplicates, restored };
 }
 
 // ─── Marketing metrics ───────────────────────────────────────────────────────
 
 export type ParsedMarketingRow = {
-  metricDate: Date;
+  metricDate: Date | null;
   channel: string | null;
   spend: number;
   reach: number | null;
@@ -189,7 +227,6 @@ export type ParsedMarketingRow = {
 };
 
 export function parseMarketingMetricsRows(fileBuffer: Buffer): ParsedMarketingRow[] {
-  const now = new Date();
   const parsed: ParsedMarketingRow[] = [];
   for (const rows of readWorkbookRows(fileBuffer)) {
     for (const row of rows) {
@@ -203,7 +240,7 @@ export function parseMarketingMetricsRows(fileBuffer: Buffer): ParsedMarketingRo
         return n === null ? null : Math.trunc(n);
       };
       parsed.push({
-        metricDate: metricDate || now,
+        metricDate,
         channel: String(get("Channel") ?? "").trim() || null,
         spend,
         reach: intOrNull(get("Reach")),
@@ -216,21 +253,63 @@ export function parseMarketingMetricsRows(fileBuffer: Buffer): ParsedMarketingRo
   return parsed;
 }
 
-export async function createMarketingMetricsFromRows(rows: ParsedMarketingRow[], userId: string): Promise<number> {
-  if (rows.length === 0) return 0;
-  await prisma.marketingMetric.createMany({
-    data: rows.map((metric) => ({
-      userId,
-      metricDate: metric.metricDate,
-      channel: metric.channel,
-      spend: metric.spend,
-      reach: metric.reach,
-      impressions: metric.impressions,
-      adDrivenOrders: metric.adDrivenOrders,
-      note: metric.note,
+export async function createMarketingMetricsFromRows(
+  rows: ParsedMarketingRow[],
+  userId: string,
+  importKeys?: (string | null)[],
+): Promise<ImportWriteResult> {
+  if (rows.length === 0) return { imported: 0, duplicates: 0, restored: 0 };
+
+  // Partition by key state: live rows are duplicates, trashed rows get
+  // restored, only genuinely new rows are created.
+  const keyedIdxs = rows.map((_, idx) => idx).filter((idx) => importKeys?.[idx]);
+  const statuses = await Promise.all(
+    keyedIdxs.map(async (idx) => ({
+      idx,
+      status: await findExistingImportKey("marketingMetric", userId, importKeys![idx] as string),
     })),
+  );
+  const liveKeys = new Set(statuses.filter((s) => s.status === "live").map((s) => s.idx));
+  const deletedIdxs = statuses.filter((s) => s.status === "deleted").map((s) => s.idx);
+
+  const duplicates = liveKeys.size;
+  let restored = 0;
+  // Failed restores (row vanished mid-flight) fall through to fresh creates.
+  const retryIdxs: number[] = [];
+  for (const idx of deletedIdxs) {
+    const id = await restoreImportKey("marketingMetric", userId, importKeys![idx] as string);
+    if (id) restored += 1;
+    else retryIdxs.push(idx);
+  }
+
+  const newIdxs = rows
+    .map((_, idx) => idx)
+    .filter((idx) => !liveKeys.has(idx) && !deletedIdxs.includes(idx));
+  const createIdxs = [...newIdxs, ...retryIdxs];
+  if (createIdxs.length === 0) return { imported: 0, duplicates, restored };
+  // Missing dates fall back to the import moment here at write time — never
+  // in the parsed row — so fingerprints stay stable across re-imports.
+  const now = new Date();
+  const result = await prisma.marketingMetric.createMany({
+    data: createIdxs.map((idx) => {
+      const metric = rows[idx];
+      return {
+        userId,
+        metricDate: metric.metricDate || now,
+        channel: metric.channel,
+        spend: metric.spend,
+        reach: metric.reach,
+        impressions: metric.impressions,
+        adDrivenOrders: metric.adDrivenOrders,
+        note: metric.note,
+        importKey: importKeys?.[idx] ?? null,
+      };
+    }),
+    // Race guard for concurrent confirms; key-less rows never conflict.
+    skipDuplicates: true,
   });
-  return rows.length;
+  const created = result.count;
+  return { imported: created, duplicates: duplicates + (createIdxs.length - created), restored };
 }
 
 // ─── Sales orders ────────────────────────────────────────────────────────────
@@ -322,29 +401,167 @@ async function resolveCustomerId(
   return customer.id;
 }
 
-export async function createSalesOrdersFromRows(rows: ParsedSalesOrderRow[], userId: string): Promise<number> {
-  let count = 0;
-  for (const order of rows) {
+export type ImportSource = {
+  /** Deal `source` value, e.g. "telegram_sales_import" or "dashboard_import". */
+  source: string;
+  /** Human channel label stored on deals, e.g. "Telegram" or "Web". */
+  sourceChannel: string;
+  /** Prefix used in customer activity descriptions. */
+  activityPrefix: string;
+};
+
+const TELEGRAM_SALES_SOURCE: ImportSource = {
+  source: "telegram_sales_import",
+  sourceChannel: "Telegram",
+  activityPrefix: "Telegram sales import",
+};
+
+const TELEGRAM_CS_SOURCE: ImportSource = {
+  source: "telegram_cs_import",
+  sourceChannel: "Telegram",
+  activityPrefix: "Telegram customer service import",
+};
+
+export const DASHBOARD_SALES_SOURCE: ImportSource = {
+  source: "dashboard_import",
+  sourceChannel: "Web",
+  activityPrefix: "Web import",
+};
+
+export const DASHBOARD_CS_SOURCE: ImportSource = {
+  source: "dashboard_cs_import",
+  sourceChannel: "Web",
+  activityPrefix: "Web customer service import",
+};
+
+export type ImportWriteResult = {
+  imported: number;
+  duplicates: number;
+  restored: number;
+};
+
+/** Row state for an import key: live rows are duplicates, trashed rows get restored. */
+export type ImportKeyStatus = "live" | "deleted" | "missing";
+
+export function isPrismaUniqueConstraintError(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+}
+
+/**
+ * Check-then-create for an import-keyed row. The pre-check makes the common
+ * re-import case cheap; the P2002 catch keeps concurrent confirms safe.
+ * Soft-deleted rows with the same key count as duplicates (they stay deleted).
+ */
+export async function findExistingImportKey(
+  model: "deal" | "expense" | "financeEntry" | "marketingMetric",
+  userId: string,
+  importKey: string,
+): Promise<ImportKeyStatus> {
+  const where = { userId_importKey: { userId, importKey } };
+  let row: { id: string; deletedAt: Date | null } | null = null;
+  switch (model) {
+    case "deal":
+      row = await prisma.deal.findUnique({ where, select: { id: true, deletedAt: true } });
+      break;
+    case "expense":
+      row = await prisma.expense.findUnique({ where, select: { id: true, deletedAt: true } });
+      break;
+    case "financeEntry":
+      row = await prisma.financeEntry.findUnique({ where, select: { id: true, deletedAt: true } });
+      break;
+    case "marketingMetric":
+      row = await prisma.marketingMetric.findUnique({ where, select: { id: true, deletedAt: true } });
+      break;
+  }
+  if (!row) return "missing";
+  return row.deletedAt ? "deleted" : "live";
+}
+
+/** Bring a soft-deleted import-keyed row back. Returns its id. */
+export async function restoreImportKey(
+  model: "deal" | "expense" | "financeEntry" | "marketingMetric",
+  userId: string,
+  importKey: string,
+): Promise<string | null> {
+  const where = { userId_importKey: { userId, importKey } };
+  const data = restoreData(userId);
+  switch (model) {
+    case "deal": {
+      const row = await prisma.deal.findUnique({ where, select: { id: true } });
+      if (!row) return null;
+      await prisma.deal.update({ where: { id: row.id }, data });
+      return row.id;
+    }
+    case "expense": {
+      const row = await prisma.expense.findUnique({ where, select: { id: true } });
+      if (!row) return null;
+      await prisma.expense.update({ where: { id: row.id }, data });
+      return row.id;
+    }
+    case "financeEntry": {
+      const row = await prisma.financeEntry.findUnique({ where, select: { id: true } });
+      if (!row) return null;
+      await prisma.financeEntry.update({ where: { id: row.id }, data });
+      return row.id;
+    }
+    case "marketingMetric": {
+      const row = await prisma.marketingMetric.findUnique({ where, select: { id: true } });
+      if (!row) return null;
+      await prisma.marketingMetric.update({ where: { id: row.id }, data });
+      return row.id;
+    }
+  }
+}
+
+export async function createSalesOrdersFromRows(
+  rows: ParsedSalesOrderRow[],
+  userId: string,
+  importSource: ImportSource = TELEGRAM_SALES_SOURCE,
+  importKeys?: (string | null)[],
+): Promise<ImportWriteResult> {
+  let imported = 0;
+  let duplicates = 0;
+  let restored = 0;
+  for (let idx = 0; idx < rows.length; idx++) {
+    const order = rows[idx];
+    const importKey = importKeys?.[idx] ?? null;
+    if (importKey) {
+      const status = await findExistingImportKey("deal", userId, importKey);
+      if (status === "live") {
+        duplicates += 1;
+        continue;
+      }
+      if (status === "deleted") {
+        // If the row vanished mid-flight, fall through and create fresh.
+        if (await restoreImportKey("deal", userId, importKey)) {
+          restored += 1;
+          continue;
+        }
+      }
+    }
     const dealDate = order.orderDate || new Date();
     const customerId = order.customerName ? await resolveCustomerId(order.customerName, order.customerPhone, userId, dealDate) : null;
     const amount = order.unitPrice * order.quantity;
-    const deal = await prisma.deal.create({
-      data: {
-        userId,
-        customerId,
-        // Backdate so the deal lands in the order's month, not the import month.
-        createdAt: dealDate,
-        stage: order.stage,
-        fulfillmentStatus: order.fulfillmentStatus,
-        source: "telegram_sales_import",
-        sourceChannel: "Telegram",
-        quotedAmount: amount > 0 ? amount : null,
-        lastContactAt: dealDate,
-        wonAt: order.stage === DealStage.WON ? dealDate : undefined,
-        lostAt: order.stage === DealStage.LOST ? dealDate : undefined,
-        note: [order.notes, order.orderDate ? `Order date: ${order.orderDate.toISOString().slice(0, 10)}` : ""]
-          .filter(Boolean)
-          .join(" · ") || null,
+    let deal: { id: string };
+    try {
+      deal = await prisma.deal.create({
+        data: {
+          userId,
+          customerId,
+          // Backdate so the deal lands in the order's month, not the import month.
+          createdAt: dealDate,
+          stage: order.stage,
+          fulfillmentStatus: order.fulfillmentStatus,
+          source: importSource.source,
+          sourceChannel: importSource.sourceChannel,
+          importKey,
+          quotedAmount: amount > 0 ? amount : null,
+          lastContactAt: dealDate,
+          wonAt: order.stage === DealStage.WON ? dealDate : undefined,
+          lostAt: order.stage === DealStage.LOST ? dealDate : undefined,
+          note: [order.notes, order.orderDate ? `Order date: ${order.orderDate.toISOString().slice(0, 10)}` : ""]
+            .filter(Boolean)
+            .join(" · ") || null,
         items: {
           create: [{
             productName: order.productName,
@@ -353,20 +570,28 @@ export async function createSalesOrdersFromRows(rows: ParsedSalesOrderRow[], use
             unitPrice: order.unitPrice,
           }],
         },
-      },
-    });
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (isPrismaUniqueConstraintError(err)) {
+        duplicates += 1;
+        continue;
+      }
+      throw err;
+    }
     if (customerId) {
       await prisma.customerActivity.create({
         data: {
           customerId,
           action: "demand_report",
-          description: `Telegram sales import · ${deal.id}`,
+          description: `${importSource.activityPrefix} · ${deal.id}`,
         },
       });
     }
-    count += 1;
+    imported += 1;
   }
-  return count;
+  return { imported, duplicates, restored };
 }
 
 // ─── Customer service records ────────────────────────────────────────────────
@@ -457,10 +682,30 @@ async function resolveCsCustomerId(
 
 export async function createCustomerServiceRecordsFromRows(
   rows: ParsedCustomerServiceRow[],
-  userId: string
-): Promise<number> {
-  let count = 0;
-  for (const row of rows) {
+  userId: string,
+  importSource: ImportSource = TELEGRAM_CS_SOURCE,
+  importKeys?: (string | null)[],
+): Promise<ImportWriteResult> {
+  let imported = 0;
+  let duplicates = 0;
+  let restored = 0;
+  for (let idx = 0; idx < rows.length; idx++) {
+    const row = rows[idx];
+    const importKey = importKeys?.[idx] ?? null;
+    if (importKey) {
+      const status = await findExistingImportKey("deal", userId, importKey);
+      if (status === "live") {
+        duplicates += 1;
+        continue;
+      }
+      if (status === "deleted") {
+        // If the row vanished mid-flight, fall through and create fresh.
+        if (await restoreImportKey("deal", userId, importKey)) {
+          restored += 1;
+          continue;
+        }
+      }
+    }
     const customerId = await resolveCsCustomerId(row, userId);
     const contactDate = row.contactDate || new Date();
     const { stage, fulfillmentStatus } = csStageFor(row.status, row.purchaseAmount);
@@ -470,33 +715,44 @@ export async function createCustomerServiceRecordsFromRows(
       row.contactDate ? `Contact date: ${row.contactDate.toISOString().slice(0, 10)}` : "",
     ].filter(Boolean);
 
-    const deal = await prisma.deal.create({
-      data: {
-        userId,
-        customerId,
-        // Backdate so the record lands in the contact's month.
-        createdAt: contactDate,
-        stage,
-        fulfillmentStatus,
-        source: "telegram_cs_import",
-        sourceChannel: "Telegram",
-        quotedAmount: row.purchaseAmount && row.purchaseAmount > 0 ? row.purchaseAmount : null,
-        lastContactAt: contactDate,
-        wonAt: stage === DealStage.WON ? contactDate : undefined,
-        lostAt: stage === DealStage.LOST ? contactDate : undefined,
-        note: noteParts.join(" · ") || null,
-        items: row.purchasedProduct
-          ? {
-              create: [{
-                productName: row.purchasedProduct,
-                sku: null,
-                quantity: 1,
-                unitPrice: row.purchaseAmount && row.purchaseAmount > 0 ? row.purchaseAmount : 0,
-              }],
-            }
-          : undefined,
-      },
-    });
+    let deal: { id: string };
+    try {
+      deal = await prisma.deal.create({
+        data: {
+          userId,
+          customerId,
+          // Backdate so the record lands in the contact's month.
+          createdAt: contactDate,
+          stage,
+          fulfillmentStatus,
+          source: importSource.source,
+          sourceChannel: importSource.sourceChannel,
+          importKey,
+          quotedAmount: row.purchaseAmount && row.purchaseAmount > 0 ? row.purchaseAmount : null,
+          lastContactAt: contactDate,
+          wonAt: stage === DealStage.WON ? contactDate : undefined,
+          lostAt: stage === DealStage.LOST ? contactDate : undefined,
+          note: noteParts.join(" · ") || null,
+          items: row.purchasedProduct
+            ? {
+                create: [{
+                  productName: row.purchasedProduct,
+                  sku: null,
+                  quantity: 1,
+                  unitPrice: row.purchaseAmount && row.purchaseAmount > 0 ? row.purchaseAmount : 0,
+                }],
+              }
+            : undefined,
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      if (isPrismaUniqueConstraintError(err)) {
+        duplicates += 1;
+        continue;
+      }
+      throw err;
+    }
 
     if (row.nextFollowUp || row.lastContactNote) {
       await prisma.followUpNote.create({
@@ -513,11 +769,11 @@ export async function createCustomerServiceRecordsFromRows(
         data: {
           customerId,
           action: "customer_service",
-          description: `Telegram customer service import · ${deal.id}`,
+          description: `${importSource.activityPrefix} · ${deal.id}`,
         },
       });
     }
-    count += 1;
+    imported += 1;
   }
-  return count;
+  return { imported, duplicates, restored };
 }

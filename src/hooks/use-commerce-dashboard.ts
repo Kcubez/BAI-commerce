@@ -61,7 +61,7 @@ export function useCommerceRecommendations(params: CommerceDashboardParams, enab
           if (params.to) search.set("to", params.to);
         }
       }
-      const response = await fetch(`/api/dashboard/action-recommendations?${search.toString()}`);
+      const response = await fetch(`/api/dashboard/action-recommendations?${search.toString()}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Unable to load suggestions");
       return (await response.json()) as { recommendations: CommerceActionRecommendation[]; source: string };
     },
