@@ -241,7 +241,14 @@ export async function GET(req: NextRequest) {
   };
 
   const priorities: Priority[] = [];
-  if (receivables > 0)
+  const hasData =
+    reports.length > 0 ||
+    financeEntries.length > 0 ||
+    expenses.length > 0 ||
+    marketingMetrics.length > 0 ||
+    demands.length > 0 ||
+    deals.length > 0;
+  if (hasData && receivables > 0)
     priorities.push({
       title: "Receivable များ ကောက်ခံရန်",
       impact: "high",
@@ -273,7 +280,7 @@ export async function GET(req: NextRequest) {
       action: "Expense များ စစ်ဆေးရန်",
       actionHref: "/finance",
     });
-  if (priorities.length === 0)
+  if (hasData && priorities.length === 0)
     priorities.push({
       title: "ကောင်းမွန်သော လုပ်ငန်းလည်ပတ်မှုကို ဆက်လုပ်ရန်",
       impact: "medium",
@@ -288,39 +295,47 @@ export async function GET(req: NextRequest) {
       baseProfit30 >= 0
         ? "အခြေခံခန့်မှန်းချက်သည် ကောင်းမွန်သော်လည်း Receivable ကောက်ခံခြင်းနှင့် Active Deal များ ပိတ်သိမ်းခြင်းက တိုးတက်မှုကို ဆုံးဖြတ်မည်ဖြစ်သည်။"
         : "လက်ရှိလုပ်ငန်းနှုန်းအရ အရှုံးဖြစ်နိုင်သည်။ Marketing Budget မတိုးမီ Cash Collection၊ Conversion နှင့် Expense Control ကို ဦးစားပေးပါ။",
-    priorities: priorities.slice(0, 3),
-    plan: [
-      {
-        horizon: "Next 30 days" as const,
-        goal: "Cash Flow နှင့် Sales Pipeline တည်ငြိမ်စေရန်",
-        actions: [
-          "Pending Deal တိုင်းအတွက် နောက်တစ်ကြိမ် Follow-up ရက် သတ်မှတ်ပါ။",
-          "ကျန်ရှိနေသော Receivable များကို ကောက်ခံရန် သို့မဟုတ် ရက်ချိန်းသတ်မှတ်ပါ။",
-          "Stock ပြတ်လပ်နေသော Product များအတွက် ဖြည့်တင်းမည့်တာဝန်ရှိသူကို အတည်ပြုပါ။",
-        ],
-      },
-      {
-        horizon: "Next 60 days" as const,
-        goal: "ထပ်တလဲလဲ အသုံးချနိုင်သော Conversion တိုးတက်စေရန်",
-        actions: [
-          "Marketing Channel များကို Closed Revenue နှင့် နှိုင်းယှဉ်ပါ။",
-          "High-Priority Lead များအတွက် Follow-up Playbook ကို စံသတ်မှတ်ပါ။",
-          "Expense များကို Revenue နှင့် နှိုင်းယှဉ်စစ်ဆေးပါ။",
-        ],
-      },
-      {
-        horizon: "Next 90 days" as const,
-        goal: "ထိန်းချုပ်ထားသော တိုးတက်မှု စီမံရန်",
-        actions: [
-          "လက်တွေ့ကျသော Quarterly Revenue နှင့် Margin Target သတ်မှတ်ပါ။",
-          "Conversion သက်သေပြပြီးသော Channel များတွင်သာ Budget ထည့်ပါ။",
-          "ရောင်းအားကောင်းသော Product များအတွက် Safety Stock သတ်မှတ်ပါ။",
-        ],
-      },
-    ],
+    priorities: hasData ? priorities.slice(0, 3) : [],
+    plan: hasData
+      ? [
+          {
+            horizon: "Next 30 days" as const,
+            goal: "Cash Flow နှင့် Sales Pipeline တည်ငြိမ်စေရန်",
+            actions: [
+              "Pending Deal တိုင်းအတွက် နောက်တစ်ကြိမ် Follow-up ရက် သတ်မှတ်ပါ။",
+              "ကျန်ရှိနေသော Receivable များကို ကောက်ခံရန် သို့မဟုတ် ရက်ချိန်းသတ်မှတ်ပါ။",
+              "Stock ပြတ်လပ်နေသော Product များအတွက် ဖြည့်တင်းမည့်တာဝန်ရှိသူကို အတည်ပြုပါ။",
+            ],
+          },
+          {
+            horizon: "Next 60 days" as const,
+            goal: "ထပ်တလဲလဲ အသုံးချနိုင်သော Conversion တိုးတက်စေရန်",
+            actions: [
+              "Marketing Channel များကို Closed Revenue နှင့် နှိုင်းယှဉ်ပါ။",
+              "High-Priority Lead များအတွက် Follow-up Playbook ကို စံသတ်မှတ်ပါ။",
+              "Expense များကို Revenue နှင့် နှိုင်းယှဉ်စစ်ဆေးပါ။",
+            ],
+          },
+          {
+            horizon: "Next 90 days" as const,
+            goal: "ထိန်းချုပ်ထားသော တိုးတက်မှု စီမံရန်",
+            actions: [
+              "လက်တွေ့ကျသော Quarterly Revenue နှင့် Margin Target သတ်မှတ်ပါ။",
+              "Conversion သက်သေပြပြီးသော Channel များတွင်သာ Budget ထည့်ပါ။",
+              "ရောင်းအားကောင်းသော Product များအတွက် Safety Stock သတ်မှတ်ပါ။",
+            ],
+          },
+        ]
+      : [],
   };
 
   // Planning is deliberately calculated from the approved operational data.
   // It does not call an external AI service.
-  return NextResponse.json({ snapshot, scenarios: buildScenarios(snapshot), ...fallback, source: "local" });
+  return NextResponse.json({
+    snapshot,
+    scenarios: hasData ? buildScenarios(snapshot) : [],
+    ...fallback,
+    source: "local",
+    hasData,
+  });
 }

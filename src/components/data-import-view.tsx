@@ -241,7 +241,8 @@ export function DataImportView() {
         <CardHeader>
           <CardTitle className="text-base">Column templates</CardTitle>
           <CardDescription>
-            Download a CSV template with the expected header row, fill in your rows, then upload.
+            Download a CSV template with the expected header row and 3 sample rows. Replace the
+            sample rows with your own data, then upload.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">

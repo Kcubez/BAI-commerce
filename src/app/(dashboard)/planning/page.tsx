@@ -18,6 +18,7 @@ import {
   CalendarDays,
   CheckCircle2,
   CircleDollarSign,
+  Inbox,
   RefreshCw,
   TrendingDown,
   TrendingUp,
@@ -38,6 +39,35 @@ function impactBadgeClass(impact: "high" | "medium" | "low") {
     return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300 font-semibold";
   }
   return "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-300 font-semibold";
+}
+
+function PlanningEmptyState({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 px-6 py-10 text-center dark:border-slate-700 dark:bg-slate-900/40">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-200/70 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+        <Inbox className="h-5 w-5" />
+      </span>
+      <div>
+        <p className="text-sm font-bold text-foreground">{title}</p>
+        <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-muted-foreground">
+          {description}
+        </p>
+      </div>
+      <Link
+        href="/import"
+        className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+      >
+        <span>Go to Data Import</span>
+        <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    </div>
+  );
 }
 
 export default function PlanningPage() {
@@ -296,6 +326,13 @@ export default function PlanningPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
+                {!data.hasData ? (
+                  <PlanningEmptyState
+                    title="No outlook available for this period"
+                    description="There is no operational data in the selected period, so a 30-day projection can't be generated. Import sales, expense, or pipeline records — or switch to a period with activity — to see your future condition outlook."
+                  />
+                ) : (
+                  <>
                 {/* Executive Summary Box with Proper Burmese Line Height */}
                 <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 leading-relaxed dark:border-violet-900/40 dark:bg-violet-950/20">
                   <p className="text-sm font-semibold text-foreground">{data.executiveSummary}</p>
@@ -343,6 +380,8 @@ export default function PlanningPage() {
                     })}
                   </div>
                 </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 
@@ -353,7 +392,13 @@ export default function PlanningPage() {
                 <CardDescription className="text-xs">Highest-leverage operational actions</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3.5">
-                {data.priorities.map((item, idx) => (
+                {!data.hasData || data.priorities.length === 0 ? (
+                  <PlanningEmptyState
+                    title="No decision priorities yet"
+                    description="Priorities are generated from receivables, stock levels, open deals, and margins. This period has no signals to act on — add operational data or review another period."
+                  />
+                ) : (
+                  data.priorities.map((item, idx) => (
                   <div
                     key={`${item.title}-${idx}`}
                     className="group rounded-xl border border-border/80 bg-background p-4 shadow-2xs transition-all hover:border-violet-300 dark:hover:border-violet-800"
@@ -375,7 +420,8 @@ export default function PlanningPage() {
                       <ArrowRight className="h-3.5 w-3.5" />
                     </Link>
                   </div>
-                ))}
+                ))
+                )}
               </CardContent>
             </Card>
           </div>
@@ -394,6 +440,12 @@ export default function PlanningPage() {
               </div>
             </CardHeader>
             <CardContent>
+              {!data.hasData || data.plan.length === 0 ? (
+                <PlanningEmptyState
+                  title="No execution plan for this period"
+                  description="The 90-day roadmap is built from your current operational velocity. Once this period has sales, pipeline, or expense activity, your staged plan will appear here."
+                />
+              ) : (
               <div className="grid gap-4 md:grid-cols-3">
                 {data.plan.map((step, idx) => (
                   <div
@@ -422,6 +474,7 @@ export default function PlanningPage() {
                   </div>
                 ))}
               </div>
+              )}
             </CardContent>
           </Card>
         </>

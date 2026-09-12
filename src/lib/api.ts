@@ -1073,8 +1073,51 @@ export const importsApi = {
   templateCsv: (type: DataImportType) => {
     const meta = DATA_IMPORT_TYPES.find((t) => t.value === type);
     if (!meta) return "";
-    return `${meta.columns.join(",")}\n`;
+    const lines = [meta.columns.map(escapeCsvCell).join(",")];
+    for (const row of TEMPLATE_EXAMPLE_ROWS[type] ?? []) {
+      lines.push(row.map(escapeCsvCell).join(","));
+    }
+    return `${lines.join("\n")}\n`;
   },
+};
+
+// ─── Column template example rows ────────────────────────────────────────────
+// Three realistic (IT-device business) sample rows per template so the
+// downloaded CSV looks like real data. Every value parses cleanly through the
+// existing import parsers (stage/status/category mappings); users replace
+// these rows with their own data before uploading.
+
+function escapeCsvCell(value: string | number): string {
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+export const TEMPLATE_EXAMPLE_ROWS: Record<DataImportType, (string | number)[][]> = {
+  sales_orders: [
+    ["2026-08-05", "Aung Khant Min", "09781234567", "ThinkPad E14 Gen 5", "SKU-LAP-101", 2, 2350000, "Won", "Fulfilled", "Paid in full via KBZPay"],
+    ["2026-08-12", "Su Wai Phyo", "09965432109", "1TB NVMe SSD", "SKU-SSD-201", 5, 185000, "Quoted", "Pending", "Waiting for customer confirmation"],
+    ["2026-08-18", "Hein Htet Aung", "09733445566", "Screen Replacement Service", "SVC-REP-001", 1, 180000, "New Lead", "Processing", "Cracked display - diagnosis done"],
+  ],
+  customer_service: [
+    ["2026-08-06", "Aung Khant Min", "ABC Trading", "09781234567", "aungkhant@example.com", "ThinkPad E14 Gen 5", 4700000, "Closed", "", 5, "Setup complete - customer satisfied"],
+    ["2026-08-13", "Su Wai Phyo", "XYZ Mart", "09965432109", "suwai@example.com", "1TB NVMe SSD", 925000, "Active", "2026-08-27", 4, "Follow up on bulk order for branch office"],
+    ["2026-08-19", "Hein Htet Aung", "", "09733445566", "heinhtet@example.com", "Screen Replacement Service", 180000, "Pending", "2026-08-25", 3, "Waiting for replacement part arrival"],
+  ],
+  finance: [
+    ["2026-08-05", "Laptop sales - ThinkPad E14 x2", "Device Sales", "Income", 4700000, "KBZPay", "INV-2026-0801", "Paid in full"],
+    ["2026-08-10", "SSD restock from supplier", "Inventory Purchase", "Expense", 3200000, "Bank Transfer", "PO-2026-0722", "20 units received"],
+    ["2026-08-15", "Facebook page boost - August promo", "Marketing", "Expense", 350000, "KBZPay", "AD-2026-0815", "Back-to-school campaign"],
+  ],
+  product_catalog: [
+    ["SKU-LAP-101", "ThinkPad E14 Gen 5", "IT Hardware", 1980000, 2350000, 12, 2],
+    ["SKU-SSD-201", "1TB NVMe SSD", "Components", 152000, 185000, 40, 5],
+    ["SVC-REP-001", "Screen Replacement Service", "Service", 90000, 180000, 0, 0],
+  ],
+  marketing_metrics: [
+    ["2026-08-05", "Facebook Ads", 120000, 45000, 120000, 8, "Back-to-school laptop promo"],
+    ["2026-08-12", "TikTok Ads", 90000, 60000, 150000, 5, "SSD upgrade short video"],
+    ["2026-08-19", "Viber Promotion", 50000, 15000, 30000, 3, "Repair service broadcast"],
+  ],
 };
 
 // ─── Brainstorm & Planning API ───────────────────────────────────────────────
@@ -1095,6 +1138,7 @@ export type PlanningStep = {
 
 export type PlanningInsightsResponse = {
   source: "ai" | "heuristic" | "local";
+  hasData: boolean;
   executiveSummary: string;
   futureOutlook: string;
   snapshot: {

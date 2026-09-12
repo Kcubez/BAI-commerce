@@ -198,8 +198,14 @@ export async function GET(req: NextRequest) {
       ? { status: onTrack, tone: "emerald" as const }
       : { status: behind, tone: "red" as const };
   };
+  const compareExpenseKpi = (value: number, target: number | null) => {
+    if (target === null || target <= 0) return { status: "Not Set", tone: "slate" as const };
+    return value <= target
+      ? { status: "On Track", tone: "emerald" as const }
+      : { status: "Over Limit", tone: "red" as const };
+  };
   const revenueCompare = compareKpi(revenue, salesTarget, "On Track", "Below Target");
-  const expenseCompare = compareKpi(expense, expenseTarget, "On Track", "Over Limit");
+  const expenseCompare = compareExpenseKpi(expense, expenseTarget);
   const ordersCompare = compareKpi(ordersReceived, demandTarget, "On Track", "Below Target");
   const fulfilledCompare = compareKpi(fulfilledOrders, appointmentsTarget, "On Track", "Below Target");
   const customersCompare = compareKpi(newCustomers, newCustomersTarget, "On Track", "Below Target");
