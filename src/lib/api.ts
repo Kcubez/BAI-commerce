@@ -1061,8 +1061,7 @@ export const importsApi = {
     formData.append("file", file);
     if (type && type !== "auto") formData.append("type", type);
     return postImportForm<ImportPreviewResponse>("/api/imports/preview", formData);
-  },
-  confirm: (file: File, type: DataImportType, excludedIndices: number[], fileHash?: string) => {
+  },  confirm: (file: File, type: DataImportType, excludedIndices: number[], fileHash?: string) => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("type", type);
@@ -1075,5 +1074,54 @@ export const importsApi = {
     if (!meta) return "";
     return `${meta.columns.join(",")}\n`;
   },
+};
+
+// ─── Brainstorm & Planning API ───────────────────────────────────────────────
+
+export type PlanningPriority = {
+  title: string;
+  impact: "high" | "medium" | "low";
+  rationale: string;
+  action: string;
+  actionHref: string;
+};
+
+export type PlanningStep = {
+  horizon: "Next 30 days" | "Next 60 days" | "Next 90 days";
+  goal: string;
+  actions: string[];
+};
+
+export type PlanningInsightsResponse = {
+  source: "ai" | "heuristic" | "local";
+  executiveSummary: string;
+  futureOutlook: string;
+  snapshot: {
+    periodDays: number;
+    revenue: number;
+    expenses: number;
+    profit: number;
+    margin: number;
+    demandCount: number;
+    pendingDeals: number;
+    highPriorityLeads: number;
+    receivables: number;
+    overdueDebt: number;
+    upcomingExpiries: number;
+    lowStockCount: number;
+    lowStockTop: string | null;
+    maintenanceProjects: number;
+    projectedRevenue30: number;
+    projectedExpenses30: number;
+    projectedProfit30: number;
+  };
+  scenarios: { name: string; revenue: number; expenses: number; profit: number; description: string }[];
+  priorities: PlanningPriority[];
+  plan: PlanningStep[];
+};
+
+export const planningApi = {
+  insights: (params: { dateFrom?: string; dateTo?: string } = {}) =>
+    request<PlanningInsightsResponse>(`/api/planning/insights${buildDateRangeQuery(params)}`),
 };
 
