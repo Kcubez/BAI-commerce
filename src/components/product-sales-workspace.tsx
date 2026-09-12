@@ -1939,6 +1939,11 @@ export function ProductSalesWorkspace({ workspace }: { workspace: Workspace }) {
       if (!response.ok) throw new Error(result.message ?? 'Unable to move records to Trash');
       toast.success(`${result.count ?? 0} ${content[0]} record${result.count === 1 ? '' : 's'} moved to Trash`);
       // Refresh every workspace view (and Trash) so the deletion shows immediately.
+      // Note: deals + marketing-metrics power their own tables via useDeals /
+      // useMarketingMetrics, so they must be invalidated too — otherwise the
+      // KPIs clear to 0 while the table keeps stale rows until a refresh.
+      await queryClient.invalidateQueries({ queryKey: dealsKeys.all });
+      await queryClient.invalidateQueries({ queryKey: marketingMetricKeys.all });
       await queryClient.invalidateQueries({ queryKey: commerceDashboardKeys.all });
       await queryClient.invalidateQueries({ queryKey: commerceCustomersKeys.all });
       await queryClient.invalidateQueries({ queryKey: trashKeys.all });

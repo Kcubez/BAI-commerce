@@ -679,6 +679,7 @@ export type TrashRecordType =
   | "customers"
   | "sales"
   | "finance"
+  | "financeEntries"
   | "products"
   | "deals"
   | "expenses"

@@ -19,6 +19,12 @@ function invalidateBusinessData(queryClient: ReturnType<typeof useQueryClient>) 
   queryClient.invalidateQueries({ queryKey: ["project-expiries"] });
   queryClient.invalidateQueries({ queryKey: ["website-updates"] });
   queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] });
+  // Commerce workspaces read from these keys (dashboard KPIs + customer
+  // directory). Without them, restoring from Trash leaves Sales / Marketing /
+  // Customers tables stale until a manual refresh. String literals avoid a
+  // circular import with use-commerce-dashboard / use-commerce-customers.
+  queryClient.invalidateQueries({ queryKey: ["commerce-dashboard"] });
+  queryClient.invalidateQueries({ queryKey: ["commerce-customers"] });
 }
 
 export function useTrash(params: TrashParams = {}) {

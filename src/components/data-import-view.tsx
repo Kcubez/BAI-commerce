@@ -368,16 +368,29 @@ export function DataImportView() {
               <span className="text-lg font-semibold">Import complete</span>
             </div>
             <p className="text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">{result.importedCount}</span> of{' '}
-              {result.rowCount} row(s) from <code>{result.fileName}</code> imported
-              {result.userSkippedCount > 0 && ` (${result.userSkippedCount} skipped by you)`}
-              {result.invalidSkippedCount > 0 && ` (${result.invalidSkippedCount} invalid row${result.invalidSkippedCount === 1 ? "" : "s"} skipped)`}
-              {result.duplicateCount > 0 && ` (${result.duplicateCount} duplicate${result.duplicateCount === 1 ? "" : "s"} skipped)`}
-              {result.restoredCount > 0 && ` (${result.restoredCount} restored from trash)`}.
+              {result.importedCount === 0 && result.restoredCount > 0 ? (
+                <>
+                  <span className="font-semibold text-foreground">{result.restoredCount}</span> of{' '}
+                  {result.rowCount} row(s) from <code>{result.fileName}</code> restored from trash — nothing new to import
+                  {result.userSkippedCount > 0 && ` (${result.userSkippedCount} skipped by you)`}
+                  {result.invalidSkippedCount > 0 && ` (${result.invalidSkippedCount} invalid row${result.invalidSkippedCount === 1 ? "" : "s"} skipped)`}
+                  {result.duplicateCount > 0 && ` (${result.duplicateCount} duplicate${result.duplicateCount === 1 ? "" : "s"} skipped)`}.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold text-foreground">{result.importedCount}</span> of{' '}
+                  {result.rowCount} row(s) from <code>{result.fileName}</code> imported
+                  {result.userSkippedCount > 0 && ` (${result.userSkippedCount} skipped by you)`}
+                  {result.invalidSkippedCount > 0 && ` (${result.invalidSkippedCount} invalid row${result.invalidSkippedCount === 1 ? "" : "s"} skipped)`}
+                  {result.duplicateCount > 0 && ` (${result.duplicateCount} duplicate${result.duplicateCount === 1 ? "" : "s"} skipped)`}
+                  {result.restoredCount > 0 && ` (${result.restoredCount} restored from trash)`}.
+                </>
+              )}
               {result.financeBreakdown && (
                 <>
                   {' '}Including <span className="font-semibold text-foreground">{result.financeBreakdown.expenseCount}</span> expense(s) and{' '}
-                  <span className="font-semibold text-foreground">{result.financeBreakdown.incomeCount}</span> income row(s) saved to the ledger.
+                  <span className="font-semibold text-foreground">{result.financeBreakdown.incomeCount}</span> income row(s) saved to the ledger
+                  {result.importedCount === 0 && result.restoredCount > 0 && ` (${result.restoredCount} restored row${result.restoredCount === 1 ? "" : "s"} active in the ledger again)`}.
                 </>
               )}
             </p>

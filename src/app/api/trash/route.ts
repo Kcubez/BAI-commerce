@@ -8,6 +8,7 @@ const trashTypes = [
   "customers",
   "sales",
   "finance",
+  "financeEntries",
   "products",
   "deals",
   "expenses",
@@ -19,6 +20,7 @@ type TrashType = (typeof trashTypes)[number];
 type TrashRecord = {
   id: string;
   name?: string | null;
+  title?: string | null;
   customerName?: string | null;
   reporterName?: string | null;
   projectName?: string | null;
@@ -26,6 +28,7 @@ type TrashRecord = {
   company?: string | null;
   serviceName?: string | null;
   status?: string | null;
+  cashType?: string | null;
   marketingChannel?: string | null;
   totalSalesAmount?: number | null;
   url?: string | null;
@@ -35,6 +38,7 @@ type TrashRecord = {
   subcategory?: string | null;
   amount?: number | null;
   expenseDate?: Date | null;
+  entryDate?: Date | null;
   metricDate?: Date | null;
   createdAt?: Date | null;
   reportDate?: Date | null;
@@ -79,6 +83,7 @@ function scopedWhere(
     case "products":
     case "deals":
     case "expenses":
+    case "financeEntries":
     case "marketing":
       return { userId: session.user.id };
   }
@@ -182,6 +187,18 @@ function serialize(type: TrashType, record: TrashRecord) {
         deletedByUserId: record.deletedByUserId,
         deletedReason: record.deletedReason,
       };
+    case "financeEntries":
+      return {
+        ...restoreRequestMeta,
+        type,
+        id: record.id,
+        title: record.title || "Finance ledger entry",
+        subtitle: [record.cashType, record.amount ? `${record.amount.toLocaleString()} MMK` : null].filter(Boolean).join(" · ") || "Finance ledger",
+        recordDate: displayDate(record.entryDate),
+        deletedAt: record.deletedAt?.toISOString() ?? null,
+        deletedByUserId: record.deletedByUserId,
+        deletedReason: record.deletedReason,
+      };
     case "marketing":
       return {
         ...restoreRequestMeta,
@@ -277,6 +294,13 @@ async function listByType(
       ]);
       return { records: records.map((record) => serialize(type, record)), total };
     }
+    case "financeEntries": {
+      const [records, total] = await Promise.all([
+        prisma.financeEntry.findMany({ where, orderBy: { deletedAt: "desc" }, skip, take }),
+        prisma.financeEntry.count({ where }),
+      ]);
+      return { records: records.map((record) => serialize(type, record)), total };
+    }
     case "marketing": {
       const [records, total] = await Promise.all([
         prisma.marketingMetric.findMany({ where, orderBy: { deletedAt: "desc" }, skip, take }),
@@ -314,6 +338,8 @@ async function restoreRecord(
       return prisma.deal.updateMany({ where, data });
     case "expenses":
       return prisma.expense.updateMany({ where, data });
+    case "financeEntries":
+      return prisma.financeEntry.updateMany({ where, data });
     case "marketing":
       return prisma.marketingMetric.updateMany({ where, data });
   }
@@ -339,6 +365,8 @@ async function permanentlyDeleteRecord(type: TrashType, id: string) {
       return prisma.deal.deleteMany({ where });
     case "expenses":
       return prisma.expense.deleteMany({ where });
+    case "financeEntries":
+      return prisma.financeEntry.deleteMany({ where });
     case "marketing":
       return prisma.marketingMetric.deleteMany({ where });
   }
@@ -448,6 +476,10 @@ export async function POST(req: NextRequest) {
             ids = (await tx.expense.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.expense.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
             break;
+          case "financeEntries":
+            ids = (await tx.financeEntry.findMany({ where, select: { id: true } })).map((record) => record.id);
+            await tx.financeEntry.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            break;
           case "marketing":
             ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.marketingMetric.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
@@ -500,6 +532,9 @@ export async function POST(req: NextRequest) {
         case "expenses":
           records = await prisma.expense.findMany({ where, select: { id: true } });
           break;
+        case "financeEntries":
+          records = await prisma.financeEntry.findMany({ where, select: { id: true } });
+          break;
         case "marketing":
           records = await prisma.marketingMetric.findMany({ where, select: { id: true } });
           break;
@@ -547,9 +582,12 @@ export async function POST(req: NextRequest) {
       case "sales":
         exists = Boolean(await prisma.demandRecord.findFirst({ where, select: { id: true } }));
         break;
-      case "finance":
-        exists = Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
-        break;
+        case "finance":
+          exists = Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
+          break;
+        case "financeEntries":
+          exists = Boolean(await prisma.financeEntry.findFirst({ where, select: { id: true } }));
+          break;
       case "products":
         exists = Boolean(await prisma.product.findFirst({ where, select: { id: true } }));
         break;
@@ -665,6 +703,10 @@ export async function DELETE(req: NextRequest) {
             ids = (await tx.expense.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.expense.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
             break;
+          case "financeEntries":
+            ids = (await tx.financeEntry.findMany({ where, select: { id: true } })).map((record) => record.id);
+            await tx.financeEntry.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            break;
           case "marketing":
             ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.marketingMetric.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
@@ -703,9 +745,12 @@ export async function DELETE(req: NextRequest) {
       case "sales":
         exists = Boolean(await prisma.demandRecord.findFirst({ where, select: { id: true } }));
         break;
-      case "finance":
-        exists = Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
-        break;
+        case "finance":
+          exists = Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
+          break;
+        case "financeEntries":
+          exists = Boolean(await prisma.financeEntry.findFirst({ where, select: { id: true } }));
+          break;
       case "products":
         exists = Boolean(await prisma.product.findFirst({ where, select: { id: true } }));
         break;

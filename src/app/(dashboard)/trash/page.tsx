@@ -37,6 +37,7 @@ const typeLabels: Record<TrashRecordType | "all", string> = {
   customers: "Customer Service",
   sales: "Legacy Sales",
   finance: "Finance",
+  financeEntries: "Finance Ledger",
   products: "Products",
   deals: "Deals",
   expenses: "Expenses",
@@ -47,6 +48,7 @@ const typeBadgeVariant: Record<TrashRecordType, "default" | "secondary" | "outli
   customers: "secondary",
   sales: "default",
   finance: "outline",
+  financeEntries: "outline",
   products: "secondary",
   deals: "default",
   expenses: "outline",
@@ -153,6 +155,7 @@ export default function TrashPage() {
                   <SelectItem value="customers">{typeLabels.customers}</SelectItem>
                   <SelectItem value="sales">{typeLabels.sales}</SelectItem>
                   <SelectItem value="finance">{typeLabels.finance}</SelectItem>
+                  <SelectItem value="financeEntries">{typeLabels.financeEntries}</SelectItem>
                   <SelectItem value="products">{typeLabels.products}</SelectItem>
                   <SelectItem value="deals">{typeLabels.deals}</SelectItem>
                   <SelectItem value="expenses">{typeLabels.expenses}</SelectItem>

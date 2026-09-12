@@ -24,7 +24,7 @@ There is **no test suite** configured.
 
 ## Git workflow
 
-- Commit locally when work is verified (`npm run lint` + `npm run build` pass). Use concise conventional-commit messages.
+- Do not commit unless the user explicitly asks. When asked to commit, only do so after work is verified (`npm run lint` + `npm run build` pass), using concise conventional-commit messages.
 - **Never `git push` unless the user explicitly asks** — pushing to `main` triggers a Vercel production deploy.
 
 ## Environment

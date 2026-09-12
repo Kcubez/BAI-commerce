@@ -52,6 +52,15 @@ export function useConfirmImport() {
       const invalid = res.invalidSkippedCount > 0 ? ` (${res.invalidSkippedCount} invalid skipped)` : "";
       const dupes = res.duplicateCount > 0 ? ` (${res.duplicateCount} duplicate${res.duplicateCount === 1 ? "" : "s"} skipped)` : "";
       const restored = res.restoredCount > 0 ? ` (${res.restoredCount} restored from trash)` : "";
+      // A pure-restore re-import (same file, rows were soft-deleted) restores
+      // everything and imports nothing new — lead with the restore so
+      // "Imported 0 of N" doesn't read as a failure.
+      if (res.importedCount === 0 && res.restoredCount > 0) {
+        toast.success(
+          `Restored ${res.restoredCount} of ${res.rowCount} row(s) from trash — nothing new to import${userSkipped}${invalid}${dupes}`,
+        );
+        return;
+      }
       if (res.financeBreakdown) {
         const { expenseCount, incomeCount } = res.financeBreakdown;
         toast.success(
