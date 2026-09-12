@@ -18,7 +18,9 @@ import {
   isProductCatalogHeaders,
   isSalesOrdersHeaders,
   parseCustomerServiceRows,
+  parseInventoryTextRecord,
   parseMarketingMetricsRows,
+  parseMarketingTextRecord,
   parseProductCatalogRows,
   parseSalesOrderRows,
   upsertProductsFromRows,
@@ -317,9 +319,9 @@ async function upsertSender(from: {
 
 const MAIN_MENU_BUTTONS = {
   inline_keyboard: [
-    [{ text: "🤖 Q&A မေးမြန်း", callback_data: "mode:qa" }, { text: "📈 Sales", callback_data: "mode:demand_report" }],
+    [{ text: "🤖 Q&A မေးမြန်း", callback_data: "mode:qa" }, { text: "📈 Sales Orders", callback_data: "mode:demand_report" }],
     [{ text: "🎧 Customer Service", callback_data: "mode:customer_service" }, { text: "💳 Finance Transactions", callback_data: "mode:finance_transactions" }],
-    [{ text: "📦 Inventory", callback_data: "mode:inventory_import" }, { text: "📣 Marketing", callback_data: "mode:marketing_import" }],
+    [{ text: "📦 Inventory / Products", callback_data: "mode:inventory_import" }, { text: "📣 Marketing Metrics", callback_data: "mode:marketing_import" }],
   ],
 };
 
@@ -368,6 +370,26 @@ function getPlainTemplateTextForMode(mode: string | null | undefined): string {
         "Reference:",
         "Notes:",
       ].join("\n");
+    case 'inventory_import':
+      return [
+        "Product Code:",
+        "Product Name:",
+        "Category:",
+        "Unit Cost:",
+        "Selling Price:",
+        "Stock Qty:",
+        "Low Stock Threshold:",
+      ].join("\n");
+    case 'marketing_import':
+      return [
+        "Date:",
+        "Channel:",
+        "Spend:",
+        "Reach:",
+        "Impressions:",
+        "Ad-driven Orders:",
+        "Notes:",
+      ].join("\n");
     case 'demand_report':
     default:
       return [
@@ -405,10 +427,10 @@ function buildMainMenuButtons(allowedDepartments: string[]) {
     row1.push({ text: "🤖 Q&A မေးမြန်း", callback_data: "mode:qa" });
   }
   if (allowedDepartments.includes('Sales')) {
-    row1.push({ text: "📈 Sales", callback_data: "mode:demand_report" });
+    row1.push({ text: "📈 Sales Orders", callback_data: "mode:demand_report" });
     row2.push({ text: "🎧 Customer Service", callback_data: "mode:customer_service" });
-    row3.push({ text: "📦 Inventory", callback_data: "mode:inventory_import" });
-    row4.push({ text: "📣 Marketing", callback_data: "mode:marketing_import" });
+    row3.push({ text: "📦 Inventory / Products", callback_data: "mode:inventory_import" });
+    row4.push({ text: "📣 Marketing Metrics", callback_data: "mode:marketing_import" });
   }
   if (allowedDepartments.includes('Finance')) {
     row2.push({ text: "💳 Finance Transactions", callback_data: "mode:finance_transactions" });
@@ -554,7 +576,7 @@ function getFormatPrompt(): string {
   return [
     "📈 ━━━━━━━━━━━━━━━━━━━━",
     "",
-    "  <b>Sales Mode</b>",
+    "  <b>Sales Orders Mode</b>",
     "  <i>Order / lead မှတ်တမ်း</i>",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
@@ -652,14 +674,26 @@ function getInventoryImportFormatPrompt(): string {
   return [
     "📦 ━━━━━━━━━━━━━━━━━━━━",
     "",
-    "  <b>Inventory Import Mode</b>",
+    "  <b>Inventory / Products Mode</b>",
     "  <i>Product Catalog / Stock တင်သွင်းခြင်း</i>",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    "📊 Excel/CSV ဖိုင်ကို တိုက်ရိုက်ပို့ပါ",
+    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
+    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
     "",
-    "📋 <b>Excel columns:</b>",
+    "📝 <b>စာသားပုံစံ:</b>",
+    "<pre>",
+    "• Product Code: [SKU]",
+    "• Product Name: [ပစ္စည်းအမည်]",
+    "• Category: [အမျိုးအစား]",
+    "• Unit Cost: [အရင်းဈေး]",
+    "• Selling Price: [ရောင်းဈေး]",
+    "• Stock Qty: [လက်ကျန်အရေအတွက်]",
+    "• Low Stock Threshold: [အနည်းဆုံးသတ်မှတ်]",
+    "</pre>",
+    "",
+    "📊 <b>Excel columns:</b>",
     "<pre>Product Code | Product Name | Category | Unit Cost | Selling Price | Stock Qty | Low Stock Threshold</pre>",
     "",
     "💡 <i>Product Code (SKU) တူပါက အချက်အလက်အသစ်များဖြင့် update လုပ်ပါမည်။</i>",
@@ -672,14 +706,26 @@ function getMarketingImportFormatPrompt(): string {
   return [
     "📣 ━━━━━━━━━━━━━━━━━━━━",
     "",
-    "  <b>Marketing Import Mode</b>",
+    "  <b>Marketing Metrics Mode</b>",
     "  <i>ကြော်ငြာစရိတ် / ရလဒ် တင်သွင်းခြင်း</i>",
     "",
     "━━━━━━━━━━━━━━━━━━━━",
     "",
-    "📊 Excel/CSV ဖိုင်ကို တိုက်ရိုက်ပို့ပါ",
+    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
+    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
     "",
-    "📋 <b>Excel columns:</b>",
+    "📝 <b>စာသားပုံစံ:</b>",
+    "<pre>",
+    "• Date: [YYYY-MM-DD]",
+    "• Channel: [Facebook / TikTok / Viber]",
+    "• Spend: [သုံးစွဲငွေ]",
+    "• Reach: [ထိတွေ့မှုအရေအတွက်]",
+    "• Impressions: [ကြော်ငြာပြသမှု]",
+    "• Ad-driven Orders: [ရရှိသော order]",
+    "• Notes: [မှတ်ချက်]",
+    "</pre>",
+    "",
+    "📊 <b>Excel columns:</b>",
     "<pre>Date | Channel | Spend | Reach | Impressions | Ad-driven Orders | Notes</pre>",
     "",
     "💡 <i>Channel ဥပမာ - Facebook Ads၊ TikTok Ads၊ Viber</i>",
@@ -751,6 +797,9 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
+        "Excel Row 1 အတွက် -",
+        "<code>Date, Customer Name, Phone, Product Name, Product Code, Quantity, Unit Price, Stage, Fulfillment Status, Notes</code>",
+        "",
         "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
         "",
         "<code>• Date: \n• Customer Name: \n• Phone: \n• Product Name: \n• Product Code: \n• Quantity: \n• Unit Price: \n• Note: </code>",
@@ -777,6 +826,9 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
+        "Excel Row 1 အတွက် -",
+        "<code>Date, Description, Category, Type, Amount (MMK), Payment Method, Reference, Notes</code>",
+        "",
         "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
         "",
         "<code>• Date: \n• Description: \n• Category: \n• Type: \n• Amount (MMK): \n• Payment Method: \n• Reference: \n• Notes: </code>",
@@ -785,25 +837,31 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
       return [
         "📦 ━━━━━━━━━━━━━━━━━━━━",
         "",
-        "  <b>Inventory Import Template</b>",
+        "  <b>Inventory / Products Template</b>",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
         "Excel ရဲ့ ပထမဆုံး တစ်ကြောင်း (Row 1) မှာ ကူးထည့်ပါ -",
         "",
         "<code>Product Code, Product Name, Category, Unit Cost, Selling Price, Stock Qty, Low Stock Threshold</code>",
+        "",
+        "စာသားပုံစံအတွက် ဖိနှိပ်၍ Copy ကူးယူပါ -",
+        "<code>• Product Code: \n• Product Name: \n• Category: \n• Unit Cost: \n• Selling Price: \n• Stock Qty: \n• Low Stock Threshold: </code>",
       ].join("\n");
     case 'marketing_import':
       return [
         "📣 ━━━━━━━━━━━━━━━━━━━━",
         "",
-        "  <b>Marketing Import Template</b>",
+        "  <b>Marketing Metrics Template</b>",
         "",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
         "Excel ရဲ့ ပထမဆုံး တစ်ကြောင်း (Row 1) မှာ ကူးထည့်ပါ -",
         "",
         "<code>Date, Channel, Spend, Reach, Impressions, Ad-driven Orders, Notes</code>",
+        "",
+        "စာသားပုံစံအတွက် ဖိနှိပ်၍ Copy ကူးယူပါ -",
+        "<code>• Date: \n• Channel: \n• Spend: \n• Reach: \n• Impressions: \n• Ad-driven Orders: \n• Notes: </code>",
       ].join("\n");
     default:
       return [
@@ -1715,7 +1773,7 @@ export async function POST(req: NextRequest) {
           where: { id: sender.id },
           data: { activeReportType: 'demand_report' },
         });
-        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Sales & Marketing selected');
+        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Sales Orders selected');
         if (chatId && messageId) {
           await editTelegramMessage({
             botToken: settings?.botToken,
@@ -1769,7 +1827,7 @@ export async function POST(req: NextRequest) {
           where: { id: sender.id },
           data: { activeReportType: 'inventory_import' },
         });
-        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Inventory Import selected');
+        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Inventory / Products selected');
         if (chatId && messageId) {
           await editTelegramMessage({
             botToken: settings?.botToken,
@@ -1787,7 +1845,7 @@ export async function POST(req: NextRequest) {
           where: { id: sender.id },
           data: { activeReportType: 'marketing_import' },
         });
-        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Marketing Import selected');
+        await answerCallbackQuery(settings?.botToken, callbackQuery.id, '✅ Marketing Metrics selected');
         if (chatId && messageId) {
           await editTelegramMessage({
             botToken: settings?.botToken,
@@ -2490,23 +2548,99 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ─── Inventory / Marketing Import Modes (Excel-only) ───────────────
+    // ─── Inventory / Marketing Import Modes (text + Excel) ────────────────
     if (activeMode === 'inventory_import' || activeMode === 'marketing_import') {
       const isInventory = activeMode === 'inventory_import';
+      const telegramMessage = await createTelegramMessageIfNew({
+        telegramMsgId: message.message_id,
+        text: message.text,
+        senderId: sender.id,
+        chatId,
+        chatTitle: message.chat.title || null,
+        receivedAt,
+      });
+      if (!telegramMessage) {
+        return NextResponse.json({ ok: true });
+      }
+
+      if (!settings.userId) {
+        await sendTelegramMessage({
+          botToken: settings?.botToken,
+          chatId,
+          text: isInventory
+            ? "⚠️ Product သိမ်းရန် business owner account နှင့် link လုပ်ထားရန်လိုအပ်ပါသည်။"
+            : "⚠️ Marketing မှတ်တမ်း သိမ်းရန် business owner account နှင့် link လုပ်ထားရန်လိုအပ်ပါသည်။",
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      if (isInventory) {
+        const row = parseInventoryTextRecord(message.text);
+        if (!row) {
+          await sendTelegramMessage({
+            botToken: settings?.botToken,
+            chatId,
+            text: [
+              "⚠️ <b>Product Code (SKU) မပါဝင်ပါ</b>",
+              "━━━━━━━━━━━━━━━━━━━━",
+              "ပစ္စည်းကို SKU ဖြင့် မှတ်သားသောကြောင့် Product Code ထည့်ပေးပါ။",
+              "ဥပမာ — <code>Product Code: SKU-001</code>",
+              getFormatHintFooter('inventory_import'),
+            ].join("\n"),
+          });
+          return NextResponse.json({ ok: true });
+        }
+        const res = await upsertProductsFromRows([row], settings.userId);
+        const statusLine =
+          res.imported > 0
+            ? "✅ <b>ပစ္စည်း အသစ် သိမ်းဆည်းပြီးပါပြီ</b>"
+            : res.restored > 0
+              ? "♻️ <b>Trash မှ ပြန်လည်ရယူပြီး အချက်အလက်အသစ်ဖြင့် update လုပ်ပြီးပါပြီ</b>"
+              : "🔄 <b>SKU တူနေသောကြောင့် အချက်အလက်အသစ်ဖြင့် update လုပ်ပြီးပါပြီ</b>";
+        await sendTelegramMessage({
+          botToken: settings?.botToken,
+          chatId,
+          text: [
+            statusLine,
+            "━━━━━━━━━━━━━━━━━━━━",
+            `📦 <b>Product:</b> <i>${row.name}</i>`,
+            `🔖 <b>SKU:</b> <code>${row.sku}</code>`,
+            ...(row.sellingPrice != null
+              ? [`💵 <b>Price:</b> <code>${row.sellingPrice.toLocaleString()} MMK</code>`]
+              : []),
+            `📊 <b>Stock:</b> <code>${row.stockQty}</code>`,
+            getFormatHintFooter('inventory_import'),
+          ].join("\n"),
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      const metric = parseMarketingTextRecord(message.text, receivedAt);
+      if (!metric) {
+        await sendTelegramMessage({
+          botToken: settings?.botToken,
+          chatId,
+          text: [
+            "⚠️ <b>မှတ်တမ်း မသိမ်းဆည်းပါ</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "Channel (သို့မဟုတ်) Date / Spend ထည့်ပေးပါ။",
+            "ဥပမာ — <code>Channel: Facebook</code>",
+            getFormatHintFooter('marketing_import'),
+          ].join("\n"),
+        });
+        return NextResponse.json({ ok: true });
+      }
+      await createMarketingMetricsFromRows([metric], settings.userId);
       await sendTelegramMessage({
         botToken: settings?.botToken,
         chatId,
         text: [
-          isInventory ? "📦 <b>Inventory Import Mode</b>" : "📣 <b>Marketing Import Mode</b>",
+          "✅ <b>Marketing မှတ်တမ်း သိမ်းဆည်းပြီးပါပြီ</b>",
           "━━━━━━━━━━━━━━━━━━━━",
-          "",
-          "ဒီ mode က <b>Excel/CSV file</b> တင်သွင်းရန်အတွက်သာ ဖြစ်ပါသည်။",
-          "",
-          isInventory
-            ? "📋 Columns: Product Code • Product Name • Category • Unit Cost • Selling Price • Stock Qty • Low Stock Threshold"
-            : "📋 Columns: Date • Channel • Spend • Reach • Impressions • Ad-driven Orders • Notes",
-          "",
-          "ဖိုင်ကို တိုက်ရိုက် attach လုပ်ပြီး ပေးပို့ပါ။ /format နှိပ်ပြီး အသေးစိတ် ကြည့်နိုင်ပါသည်။",
+          `📅 <b>ရက်စွဲ:</b> <code>${(metric.metricDate || receivedAt).toISOString().slice(0, 10)}</code>`,
+          `📣 <b>Channel:</b> <code>${metric.channel || "-"}</code>`,
+          `💵 <b>Spend:</b> <code>${metric.spend.toLocaleString()} MMK</code>`,
+          getFormatHintFooter('marketing_import'),
         ].join("\n"),
       });
       return NextResponse.json({ ok: true });

@@ -214,6 +214,41 @@ export async function upsertProductsFromRows(
   return { imported, duplicates, restored };
 }
 
+// ─── Inventory text records (Telegram text messages) ───────────────────────
+// Mirrors parseFinanceTextRecord: `Field: value` lines. SKU is required since
+// the catalog upserts by SKU — without it there is nothing to match.
+
+export function parseInventoryTextRecord(text: string): ParsedProductRow | null {
+  const cleaned = text
+    .replace(/[၀-၉]/g, (d) => BURMESE_DIGIT_MAP[d] ?? d)
+    .replace(/,/g, "");
+  const field = (names: string[]) => {
+    for (const name of names) {
+      const match = cleaned.match(new RegExp(`${name}\\s*[:：]\\s*([^\\n]+)`, "i"));
+      if (match?.[1]?.trim()) return match[1].trim();
+    }
+    return "";
+  };
+  const sku = field(["Product Code", "Product SKU", "SKU"]);
+  if (!sku) return null;
+  const num = (names: string[]) => {
+    const raw = field(names);
+    if (!raw) return null;
+    return toNumber(raw);
+  };
+  const stock = num(["Stock Qty", "Stock"]);
+  const threshold = num(["Low Stock Threshold", "Threshold", "Low Stock"]);
+  return {
+    name: field(["Product Name", "Name"]) || sku,
+    sku,
+    category: field(["Category"]) || null,
+    unitCost: num(["Unit Cost", "Cost"]),
+    sellingPrice: num(["Selling Price", "Price"]),
+    stockQty: Math.max(0, Math.trunc(stock ?? 0)),
+    lowStockThreshold: Math.max(0, Math.trunc(threshold ?? 0)),
+  };
+}
+
 // ─── Marketing metrics ───────────────────────────────────────────────────────
 
 export type ParsedMarketingRow = {
@@ -310,6 +345,42 @@ export async function createMarketingMetricsFromRows(
   });
   const created = result.count;
   return { imported: created, duplicates: duplicates + (createIdxs.length - created), restored };
+}
+
+// ─── Marketing text records (Telegram text messages) ───────────────────────
+// Same fields as the spreadsheet parser. Returns null for fully empty
+// messages so the caller can ask for the required fields instead.
+
+export function parseMarketingTextRecord(text: string, fallbackDate: Date): ParsedMarketingRow | null {
+  const cleaned = text
+    .replace(/[၀-၉]/g, (d) => BURMESE_DIGIT_MAP[d] ?? d)
+    .replace(/,/g, "");
+  const field = (names: string[]) => {
+    for (const name of names) {
+      const match = cleaned.match(new RegExp(`${name}\\s*[:：]\\s*([^\\n]+)`, "i"));
+      if (match?.[1]?.trim()) return match[1].trim();
+    }
+    return "";
+  };
+  const intOrNull = (raw: string) => {
+    if (!raw) return null;
+    const n = toNumber(raw);
+    return n === null ? null : Math.trunc(n);
+  };
+  const channel = field(["Channel"]) || null;
+  const spend = toNumber(field(["Spend"])) ?? 0;
+  const reach = intOrNull(field(["Reach"]));
+  // Skip fully empty messages (no date and nothing measurable).
+  if (!parseExcelDate(field(["Date"])) && spend === 0 && channel == null && reach == null) return null;
+  return {
+    metricDate: parseExcelDate(field(["Date"])) || fallbackDate,
+    channel,
+    spend,
+    reach,
+    impressions: intOrNull(field(["Impressions"])),
+    adDrivenOrders: intOrNull(field(["Ad-driven Orders", "Ad Driven Orders", "Orders"])),
+    note: field(["Notes", "Note"]) || null,
+  };
 }
 
 // ─── Sales orders ────────────────────────────────────────────────────────────
