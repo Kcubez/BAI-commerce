@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -505,31 +505,70 @@ function ExpenseBreakdownChart({ items }: { items: [string, number, number, stri
 
 function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [string, number, number])[] }) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // Fill the card exactly like the Business Overview charts: measure the
+  // container and stretch the viewBox to it (fixed height, variable width)
+  // instead of letterboxing a fixed 680px-wide scene.
+  const [viewWidth, setViewWidth] = useState(680);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setViewWidth(w);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const isEmpty = weekly.every(([, spend, orders]) => Number(spend) === 0 && Number(orders) === 0);
+  // Like the Business Overview charts: render every raw point but label only
+  // a sparse subset (first / last / every Nth) so long ranges stay readable.
+  const points: readonly (readonly [string, number, number])[] = weekly;
+  const showTick = (index: number) =>
+    points.length <= 15 ||
+    index === 0 ||
+    index === points.length - 1 ||
+    index % Math.ceil(points.length / 10) === 0;
   const chartLeft = 58;
-  const chartRight = 658;
+  const chartRight = Math.max(chartLeft + 100, viewWidth - 22);
   const chartTop = 42;
   const chartBottom = 226;
-  const slot = weekly.length > 1 ? (chartRight - chartLeft) / (weekly.length - 1) : 0;
-  const maxSpend = Math.max(100_000, Math.ceil(Math.max(...weekly.map(([, spend]) => Number(spend))) / 25_000) * 25_000);
-  const maxOrders = Math.max(20, Math.ceil(Math.max(...weekly.map(([, , orders]) => Number(orders))) / 5) * 5);
-  const orderPoints = weekly.map(([, , orders], index) => `${chartLeft + 20 + index * slot},${chartBottom - (Number(orders) / maxOrders) * (chartBottom - chartTop)}`).join(' ');
-  const spendLabels = isEmpty ? [4, 3, 2, 1, 0] : Array.from({ length: 5 }, (_, index) => Math.round(maxSpend - (maxSpend / 4) * index));
-  const orderLabels = isEmpty ? [4, 3, 2, 1, 0] : Array.from({ length: 5 }, (_, index) => Math.round(maxOrders - (maxOrders / 4) * index));
-  const hovered = hoveredIndex !== null && weekly[hoveredIndex] ? weekly[hoveredIndex] : null;
+  const slot = points.length > 1 ? (chartRight - chartLeft) / (points.length - 1) : 0;
+  const barWidth = Math.max(4, Math.min(32, slot - 6));
+  // Nice round axis steps like the Business Overview charts — raw max/4 almost
+  // always lands on an ugly fraction (e.g. 112,500), so snap the step to a
+  // 1 / 1.25 / 2 / 2.5 / 5 / 10 multiple instead.
+  const niceStep = (raw: number): number => {
+    if (!(raw > 0)) return 25000;
+    const exp = Math.floor(Math.log10(raw));
+    const frac = raw / 10 ** exp;
+    const mult = frac <= 1 ? 1 : frac <= 1.25 ? 1.25 : frac <= 2 ? 2 : frac <= 2.5 ? 2.5 : frac <= 5 ? 5 : 10;
+    return mult * 10 ** exp;
+  };
+  const spendStep = niceStep(Math.max(...points.map(([, spend]) => Number(spend))) / 4);
+  const maxSpend = Math.max(100_000, spendStep * 4);
+  const orderStep = Math.max(5, Math.ceil(Math.max(...points.map(([, , orders]) => Number(orders))) / 20) * 5);
+  const maxOrders = Math.max(20, orderStep * 4);
+  const orderPoints = points.map(([, , orders], index) => `${chartLeft + 20 + index * slot},${chartBottom - (Number(orders) / maxOrders) * (chartBottom - chartTop)}`).join(' ');
+  // Rendered top-to-bottom, so index 0 must be the max (Business Overview
+  // order) — ascending here would flip the axis upside down.
+  const spendLabels = isEmpty ? [4, 3, 2, 1, 0] : [0, 1, 2, 3, 4].map((i) => maxSpend - ((maxSpend / 4) * i));
+  const orderLabels = isEmpty ? [4, 3, 2, 1, 0] : [0, 1, 2, 3, 4].map((i) => maxOrders - ((maxOrders / 4) * i));
+  const hovered = hoveredIndex !== null && points[hoveredIndex] ? points[hoveredIndex] : null;
 
   return (
-    <div className="relative h-full w-full select-none" aria-label="Ad spend compared to ad driven orders" role="img">
-      <svg className="h-full w-full overflow-visible" viewBox="0 0 680 300" preserveAspectRatio="xMidYMid meet">
+    <div ref={containerRef} className="relative h-full w-full select-none" aria-label="Ad spend compared to ad driven orders" role="img">
+      <svg className="h-full w-full overflow-visible" viewBox={`0 0 ${viewWidth} 300`} preserveAspectRatio="xMidYMid meet">
         {[42, 88, 134, 180, 226].map((y) => <line key={y} x1={chartLeft} y1={y} x2={chartRight} y2={y} stroke="#e2e8f0" className="dark:stroke-slate-800" strokeDasharray="3 3" />)}
-        {weekly.map((_, index) => {
+        {points.map((_, index) => {
           const x = chartLeft + 20 + index * slot;
           return <line key={`grid-${index}`} x1={x} x2={x} y1={chartTop} y2={chartBottom} stroke="#f8fafc" className="dark:stroke-slate-900" />;
         })}
-        {spendLabels.map((value, index) => <text key={`${value}-${index}`} x="50" y={46 + index * 46} textAnchor="end" className="fill-slate-500 font-mono" style={{ fontSize: '9px' }}>{value.toLocaleString()}</text>)}
-        {orderLabels.map((value, index) => <text key={`${value}-${index}`} x="668" y={46 + index * 46} textAnchor="start" className="fill-emerald-600 font-bold font-mono" style={{ fontSize: '9px' }}>{value}</text>)}
-        {!isEmpty && weekly.map(([week, spend], index) => {
-          const x = chartLeft + index * slot + 4;
+        {spendLabels.map((value, index) => <text key={`${value}-${index}`} x="50" y={46 + index * 46} textAnchor="end" className="fill-slate-500 dark:fill-slate-400 font-mono" style={{ fontSize: '11px' }}>{value.toLocaleString()}</text>)}
+        {orderLabels.map((value, index) => <text key={`${value}-${index}`} x={chartRight + 10} y={46 + index * 46} textAnchor="start" className="fill-emerald-600 dark:fill-emerald-400 font-bold font-mono" style={{ fontSize: '11px' }}>{value.toLocaleString()}</text>)}
+        {!isEmpty && points.map(([week, spend], index) => {
+          const px = chartLeft + 20 + index * slot;
+          const x = px - barWidth / 2;
           const height = (Number(spend) / maxSpend) * (chartBottom - chartTop);
           const isHovered = hoveredIndex === index;
           return (
@@ -537,7 +576,7 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
               <rect
                 x={x}
                 y={chartBottom - height}
-                width="32"
+                width={barWidth}
                 height={height}
                 rx="4"
                 fill="#0ea5e9"
@@ -545,9 +584,9 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
                 className="transition-all duration-150"
               />
               <rect
-                x={x - 6}
+                x={px - Math.max(22, slot / 2)}
                 y={chartTop}
-                width="44"
+                width={Math.max(44, slot)}
                 height={chartBottom - chartTop + 30}
                 fill="transparent"
                 className="cursor-pointer"
@@ -574,13 +613,15 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
           );
         })}
         {!isEmpty && <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />}
-        {weekly.map(([week], index) => {
+        {points.map(([week], index) => {
           const x = chartLeft + 20 + index * slot;
           const isHovered = hoveredIndex === index;
           return (
-            <g key={`tick-${week}`}>
+            <g key={`tick-${week}-${index}`}>
               {!isEmpty && <line x1={x} x2={x} y1={chartBottom} y2={chartBottom + 6} stroke="#cbd5e1" strokeWidth="1.2" className="dark:stroke-slate-700" />}
-              <text x={x} y="250" textAnchor="middle" className={`text-[10px] font-semibold ${isHovered ? 'fill-slate-900 dark:fill-white font-bold' : 'fill-slate-500'}`}>{week}</text>
+              {showTick(index) && (
+                <text x={x} y="250" textAnchor="middle" className={`text-xs font-bold ${isHovered ? 'fill-slate-900 dark:fill-white' : 'fill-slate-600 dark:fill-slate-300'}`}>{week}</text>
+              )}
             </g>
           );
         })}
@@ -589,9 +630,11 @@ function MarketingPerformanceChart({ weekly }: { weekly: readonly (readonly [str
         <div
           className="pointer-events-none absolute z-20 transition-all duration-75"
           style={{
-            left: `${((chartLeft + 20 + hoveredIndex! * slot) / 680) * 100}%`,
+            left: `${((chartLeft + 20 + hoveredIndex! * slot) / viewWidth) * 100}%`,
             top: '30%',
-            transform: 'translate(-50%, -100%)',
+            // Near the edges a centered tooltip would run off-screen, so pin
+            // it inside instead (same trick as the expense donut chart).
+            transform: `translate(${points.length > 1 && hoveredIndex! / (points.length - 1) > 0.7 ? '-95%' : points.length > 1 && hoveredIndex! / (points.length - 1) < 0.3 ? '-5%' : '-50%'}, -100%)`,
           }}
         >
           <div className="whitespace-nowrap rounded-lg border border-slate-700/50 bg-slate-900/95 px-3.5 py-2.5 text-xs text-white shadow-xl backdrop-blur-sm">
@@ -1246,7 +1289,7 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
     isError: isMetricsError,
     refetch: refetchMetrics,
   } = useMarketingMetrics({ dateFrom, dateTo });
-  const metrics = metricsData?.metrics ?? [];
+  const metrics = useMemo(() => metricsData?.metrics ?? [], [metricsData]);
   const [metricDialogOpen, setMetricDialogOpen] = useState(false);
   const [editingMetric, setEditingMetric] = useState<MarketingMetricRecord | null>(null);
   const [deleteMetric, setDeleteMetric] = useState<MarketingMetricRecord | null>(null);
@@ -1352,6 +1395,33 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
   const weekly = data?.chart.length ? data.chart.map((item) => [item.label, item.spend, item.orders] as const) : [['W1', 0, 0], ['W2', 0, 0], ['W3', 0, 0], ['W4', 0, 0]] as const;
   const topProducts = data?.topProducts ?? [];
 
+  // Channel spend breakdown, computed from the same period-scoped metrics
+  // table below — no extra query. Shows where the ad budget actually went.
+  const channelBreakdown = useMemo(() => {
+    const byChannel = new Map<string, { spend: number; orders: number; reach: number }>();
+    for (const metric of metrics) {
+      const key = metric.channel?.trim() || "Other";
+      const current = byChannel.get(key) ?? { spend: 0, orders: 0, reach: 0 };
+      current.spend += Number(metric.spend) || 0;
+      current.orders += Number(metric.adDrivenOrders) || 0;
+      current.reach += Number(metric.reach) || Number(metric.impressions) || 0;
+      byChannel.set(key, current);
+    }
+    const total = [...byChannel.values()].reduce((sum, entry) => sum + entry.spend, 0);
+    return {
+      total,
+      rows: [...byChannel.entries()]
+        .map(([channel, entry]) => ({
+          channel,
+          ...entry,
+          share: total > 0 ? (entry.spend / total) * 100 : 0,
+          costPerOrder: entry.orders > 0 ? entry.spend / entry.orders : 0,
+        }))
+        .sort((a, b) => b.spend - a.spend),
+    };
+  }, [metrics]);
+  const channelColors = ["#0ea5e9", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#64748b"];
+
   const [metricPage, setMetricPage] = useState(1);
   const metricPageSize = 10;
   const totalMetricPages = Math.max(1, Math.ceil(metrics.length / metricPageSize));
@@ -1368,17 +1438,17 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
 
       <SmartSuggestions recommendations={recommendations} isLoading={isRecommendationsLoading} areaFilter="marketing" />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
-          <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Ad Spend vs Ad-driven Orders</h2></div>
-          <div className="px-6 pb-6">
-            <div className="mb-4 flex items-center justify-center gap-6 text-sm font-semibold text-slate-600">
-              <span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm bg-sky-500" />Ad Spend</span>
-              <span className="inline-flex items-center gap-2"><span className="h-1 w-8 bg-emerald-500" />Orders</span>
-            </div>
-            <div className="relative h-72 w-full"><MarketingPerformanceChart weekly={weekly} /></div>
+      <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+        <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Ad Spend vs Ad-driven Orders</h2></div>
+        <div className="px-6 pb-6">
+          <div className="mb-4 flex items-center justify-center gap-6 text-sm font-semibold text-slate-600">
+            <span className="inline-flex items-center gap-2"><span className="h-4 w-8 rounded-sm bg-sky-500" />Ad Spend</span>
+            <span className="inline-flex items-center gap-2"><span className="h-1 w-8 bg-emerald-500" />Orders</span>
           </div>
-        </section>
+          <div className="relative h-80 w-full"><MarketingPerformanceChart weekly={weekly} /></div>
+        </div>
+      </section>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
           <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Top Performing Products (Ad-driven)</h2></div>
           <div className="divide-y-2 divide-slate-100 px-6 dark:divide-slate-900">
@@ -1388,6 +1458,27 @@ function MarketingWorkspace({ data, recommendations, isRecommendationsLoading, d
                 <span className="whitespace-nowrap rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{product.orders} orders</span>
               </div>
             )) : <div className="py-10 text-center text-sm font-semibold text-slate-500">No ad-driven product data yet.</div>}
+          </div>
+        </section>
+        <section className="rounded-xl border-2 border-slate-200 bg-card shadow-sm dark:border-slate-800">
+          <div className="p-6"><h2 className="border-b-2 border-slate-100 pb-3 text-sm font-bold uppercase tracking-wide text-slate-900 dark:border-slate-800 dark:text-slate-100">Spend by Channel</h2></div>
+          <div className="space-y-5 px-6 pb-6">
+            {channelBreakdown.rows.length ? channelBreakdown.rows.map((row, index) => (
+              <div key={row.channel}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="truncate font-bold text-slate-900 dark:text-slate-100">{row.channel}</p>
+                  <p className="whitespace-nowrap text-sm font-black text-slate-900 dark:text-slate-100">{amount(row.spend)} <span className="text-xs font-bold text-slate-400">MMK · {row.share.toFixed(1)}%</span></p>
+                </div>
+                <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                  <div className="h-full rounded-full transition-all duration-300" style={{ width: `${Math.min(100, row.share)}%`, backgroundColor: channelColors[index % channelColors.length] }} />
+                </div>
+                <p className="mt-1.5 text-xs font-semibold text-slate-500">
+                  {row.orders} orders
+                  {row.orders > 0 ? ` · ${amount(Math.round(row.costPerOrder))} MMK/order` : " · no orders yet"}
+                  {row.reach > 0 && ` · ${amount(row.reach)} reach`}
+                </p>
+              </div>
+            )) : <div className="py-10 text-center text-sm font-semibold text-slate-500">No channel data yet for this period.</div>}
           </div>
         </section>
       </div>

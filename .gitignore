@@ -62,3 +62,4 @@ july-sample-files
 august-sample-files
 
 *.zip
+.agents/*
