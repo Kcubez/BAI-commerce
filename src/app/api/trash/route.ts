@@ -480,17 +480,23 @@ export async function POST(req: NextRequest) {
     const data = restoreData(session.user.id);
     const dateQuery = dateRangeWhere(dateFrom, dateTo);
 
-    await prisma.$transaction(async (tx) => {
+    // Sequential per-type writes instead of one 8-table transaction: a single
+    // interactive transaction times out on serverless (P2028) once trash
+    // grows. Each updateMany is atomic on its own; counts are reported so a
+    // partial run is visible and safely retryable (idempotent).
+    const restoredByType: Record<string, number> = {};
+    try {
       for (const t of types) {
         const where = { ...scopedWhere(t, session), ...onlyDeleted, ...dateQuery };
         let ids: string[];
+        let restored = 0;
 
         switch (t) {
           case "customers": {
-            const customers = await tx.customer.findMany({ where, select: { id: true } });
+            const customers = await prisma.customer.findMany({ where, select: { id: true } });
             ids = customers.map((customer) => customer.id);
-            await tx.customer.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
-            await tx.demandRecord.updateMany({
+            restored = (await prisma.customer.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
+            await prisma.demandRecord.updateMany({
               where: {
                 customerId: { in: ids },
                 deletedReason: "Deleted along with customer",
@@ -501,38 +507,38 @@ export async function POST(req: NextRequest) {
             break;
           }
           case "sales":
-            ids = (await tx.demandRecord.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.demandRecord.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.demandRecord.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.demandRecord.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
           case "finance":
-            ids = (await tx.businessReport.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.businessReport.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.businessReport.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.businessReport.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
           case "products":
-            ids = (await tx.product.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.product.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.product.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.product.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
           case "deals":
-            ids = (await tx.deal.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.deal.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.deal.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.deal.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
           case "expenses":
-            ids = (await tx.expense.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.expense.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.expense.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.expense.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
           case "financeEntries":
-            ids = (await tx.financeEntry.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.financeEntry.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.financeEntry.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.financeEntry.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
           case "marketing":
-            ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.marketingMetric.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            ids = (await prisma.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
+            restored = (await prisma.marketingMetric.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
             break;
         }
         // Admins restore on behalf of requesters too: include trashed rows
         // with a pending restore request (only trashed rows are affected —
         // the update below re-applies ...onlyDeleted).
-        const requested = await tx.restoreRequest.findMany({
+        const requested = await prisma.restoreRequest.findMany({
           where: { recordType: t, status: "pending" },
           select: { recordId: true },
         });
@@ -542,8 +548,8 @@ export async function POST(req: NextRequest) {
             // The customers cascade above ran for owned ids only; extend it
             // to requested rows (already-restored rows are skipped by
             // ...onlyDeleted, so this is a no-op for them).
-            await tx.customer.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
-            await tx.demandRecord.updateMany({
+            restored += (await prisma.customer.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data })).count;
+            await prisma.demandRecord.updateMany({
               where: {
                 customerId: { in: ids },
                 deletedReason: "Deleted along with customer",
@@ -551,10 +557,15 @@ export async function POST(req: NextRequest) {
               },
               data,
             });
+          } else {
+            // restoreRecord re-applies ...onlyDeleted, so already-restored
+            // rows are a no-op and counted only once above.
+            restored += (await restoreRecord(t, ids, session.user.id)).count;
           }
         }
+        restoredByType[t] = restored;
         if (ids.length > 0) {
-          await tx.restoreRequest.updateMany({
+          await prisma.restoreRequest.updateMany({
             where: { recordType: t, recordId: { in: ids }, status: "pending" },
             data: {
               status: "approved",
@@ -564,9 +575,15 @@ export async function POST(req: NextRequest) {
           });
         }
       }
-    });
+    } catch (error) {
+      console.error("Bulk trash restore failed:", error);
+      return NextResponse.json(
+        { message: "Bulk restore failed partway. Some records may already be restored — please retry.", restoredByType },
+        { status: 500 },
+      );
+    }
 
-    return NextResponse.json({ success: true, message: "All matching records restored" });
+    return NextResponse.json({ success: true, message: "All matching records restored", restoredByType });
   }
 
   if (action === "request_restore_all") {
@@ -747,52 +764,60 @@ export async function DELETE(req: NextRequest) {
     const types: readonly TrashType[] = bulkType === "all" ? trashTypes : [bulkType];
     const dateQuery = dateRangeWhere(dateFrom, dateTo);
 
-    await prisma.$transaction(async (tx) => {
+    // Sequential per-type deletes instead of one 8-table transaction: a
+    // single interactive transaction times out on serverless (P2028) once
+    // trash grows, surfacing as a generic "Request failed". Each deleteMany
+    // is atomic on its own; counts are reported so a partial run is visible
+    // and safely retryable (idempotent — only ...onlyDeleted rows match).
+    const deletedByType: Record<string, number> = {};
+    try {
       for (const t of types) {
         const where = { ...scopedWhere(t, session), ...onlyDeleted, ...dateQuery };
         let ids: string[];
+        let deleted = 0;
 
         switch (t) {
           case "customers": {
-            const customers = await tx.customer.findMany({ where, select: { id: true } });
+            const customers = await prisma.customer.findMany({ where, select: { id: true } });
             ids = customers.map((customer) => customer.id);
-            await tx.demandRecord.deleteMany({
+            await prisma.demandRecord.deleteMany({
               where: { customerId: { in: ids }, deletedReason: "Deleted along with customer", ...onlyDeleted },
             });
-            await tx.customer.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            deleted = (await prisma.customer.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           }
           case "sales":
-            ids = (await tx.demandRecord.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.demandRecord.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.demandRecord.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.demandRecord.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           case "finance":
-            ids = (await tx.businessReport.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.businessReport.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.businessReport.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.businessReport.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           case "products":
-            ids = (await tx.product.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.product.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.product.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.product.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           case "deals":
-            ids = (await tx.deal.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.deal.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.deal.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.deal.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           case "expenses":
-            ids = (await tx.expense.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.expense.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.expense.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.expense.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           case "financeEntries":
-            ids = (await tx.financeEntry.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.financeEntry.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.financeEntry.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.financeEntry.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
           case "marketing":
-            ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
-            await tx.marketingMetric.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } });
+            ids = (await prisma.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
+            deleted = (await prisma.marketingMetric.deleteMany({ where: { id: { in: ids }, ...onlyDeleted } })).count;
             break;
         }
+        deletedByType[t] = deleted;
         if (ids.length > 0) {
-          await tx.restoreRequest.updateMany({
+          await prisma.restoreRequest.updateMany({
             where: { recordType: t, recordId: { in: ids }, status: "pending" },
             data: {
               status: "rejected",
@@ -802,9 +827,15 @@ export async function DELETE(req: NextRequest) {
           });
         }
       }
-    });
+    } catch (error) {
+      console.error("Bulk trash delete failed:", error);
+      return NextResponse.json(
+        { message: "Bulk delete failed partway. Some records may already be deleted — please retry.", deletedByType },
+        { status: 500 },
+      );
+    }
 
-    return NextResponse.json({ success: true, message: "All matching records permanently deleted" });
+    return NextResponse.json({ success: true, message: "All matching records permanently deleted", deletedByType });
   }
 
   if (!isTrashType(type) || typeof id !== "string") {
