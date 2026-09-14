@@ -177,12 +177,20 @@ export async function PATCH(req: NextRequest) {
     data.nameNormalized = normalizeCustomerName(name);
   }
 
-  const customer = await prisma.customer.update({
-    where: { id },
+  const customer = await prisma.customer.updateMany({
+    where: { id, ...customerOwnedByUserOrAdmin(session), ...notDeleted },
     data,
   });
 
-  return NextResponse.json({ customer });
+  if (!customer.count) {
+    return NextResponse.json({ message: "Customer not found or access denied" }, { status: 404 });
+  }
+
+  const updated = await prisma.customer.findFirst({
+    where: { id, ...customerOwnedByUserOrAdmin(session) },
+  });
+
+  return NextResponse.json({ customer: updated });
 }
 
 // DELETE /api/customers — soft-delete customers matching the selected period.

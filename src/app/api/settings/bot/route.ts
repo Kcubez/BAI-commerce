@@ -80,6 +80,22 @@ export async function PUT(req: NextRequest) {
       botToken && !botToken.includes("•") ? botToken : undefined;
     const botTokenForWebhook = tokenToSave ?? oldBotToken;
 
+    // One Telegram bot can only feed one account: Telegram delivers every
+    // update to a single webhook URL, so a shared token would silently route
+    // one owner's staff reports/files into the other's dashboard.
+    if (tokenToSave) {
+      const collision = await prisma.botSettings.findFirst({
+        where: { botToken: tokenToSave, userId: { not: session.user.id }, isActive: true },
+        select: { userId: true },
+      });
+      if (collision) {
+        return NextResponse.json(
+          { message: "This bot is already connected to another account. Use a different bot token." },
+          { status: 409 },
+        );
+      }
+    }
+
     // Register a webhook for a new token, and repair legacy settings that
     // predate per-bot secrets before accepting webhook traffic from them.
     if (botTokenForWebhook && (tokenToSave || !existingWebhookSecret)) {

@@ -46,7 +46,14 @@ export async function PATCH(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid marketing metric" }, { status: 400 });
   const existing = await prisma.marketingMetric.findFirst({ where: { id: body.id, ...ownedByUserOrAdmin(session), ...notDeleted } });
   if (!existing) return NextResponse.json({ message: "Marketing metric not found" }, { status: 404 });
-  const metric = await prisma.marketingMetric.update({ where: { id: existing.id }, data: parsed.data });
+  const written = await prisma.marketingMetric.updateMany({
+    where: { id: existing.id, ...ownedByUserOrAdmin(session), ...notDeleted },
+    data: parsed.data,
+  });
+  if (!written.count) return NextResponse.json({ message: "Marketing metric not found" }, { status: 404 });
+  const metric = await prisma.marketingMetric.findFirst({
+    where: { id: existing.id, ...ownedByUserOrAdmin(session) },
+  });
   return NextResponse.json({ metric });
 }
 

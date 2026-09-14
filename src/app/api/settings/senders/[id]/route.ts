@@ -28,13 +28,25 @@ export async function PUT(
     return NextResponse.json({ message: "Sender not found or access denied" }, { status: 404 });
   }
 
-  const updated = await prisma.telegramSender.update({
-    where: { id },
+  const written = await prisma.telegramSender.updateMany({
+    where: { id: sender.id, userId: session.user.id },
     data: {
       isAuthorized: typeof isAuthorized === "boolean" ? isAuthorized : undefined,
       allowedDepartments: Array.isArray(allowedDepartments) ? allowedDepartments : undefined,
     },
   });
+
+  if (!written.count) {
+    return NextResponse.json({ message: "Sender not found or access denied" }, { status: 404 });
+  }
+
+  const updated = await prisma.telegramSender.findFirst({
+    where: { id: sender.id, userId: session.user.id },
+  });
+
+  if (!updated) {
+    return NextResponse.json({ message: "Sender not found or access denied" }, { status: 404 });
+  }
 
   return NextResponse.json({
     sender: {
@@ -68,9 +80,13 @@ export async function DELETE(
     return NextResponse.json({ message: "Sender not found or access denied" }, { status: 404 });
   }
 
-  await prisma.telegramSender.delete({
-    where: { id },
+  const deleted = await prisma.telegramSender.deleteMany({
+    where: { id: sender.id, userId: session.user.id },
   });
+
+  if (!deleted.count) {
+    return NextResponse.json({ message: "Sender not found or access denied" }, { status: 404 });
+  }
 
   return NextResponse.json({ success: true });
 }

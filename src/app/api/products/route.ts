@@ -61,7 +61,16 @@ export async function PATCH(req: NextRequest) {
   if (!product) return NextResponse.json({ message: "Product not found" }, { status: 404 });
 
   try {
-    const updated = await prisma.product.update({ where: { id: product.id }, data: parsed.data });
+    const written = await prisma.product.updateMany({
+      where: { id: product.id, ...ownedByUserOrAdmin(session), ...notDeleted },
+      data: parsed.data,
+    });
+    if (!written.count) {
+      return NextResponse.json({ message: "Product not found" }, { status: 404 });
+    }
+    const updated = await prisma.product.findFirst({
+      where: { id: product.id, ...ownedByUserOrAdmin(session) },
+    });
     return NextResponse.json({ product: updated });
   } catch (error: unknown) {
     if (error && typeof error === "object" && "code" in error && error.code === "P2002") {

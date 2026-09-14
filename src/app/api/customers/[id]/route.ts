@@ -101,9 +101,16 @@ export async function PATCH(
     return NextResponse.json({ message: "Customer not found or access denied" }, { status: 404 });
   }
 
-  const customer = await prisma.customer.update({
-    where: { id },
+  const written = await prisma.customer.updateMany({
+    where: { id, ...customerOwnedByUserOrAdmin(session), ...notDeleted },
     data: { name, phone, email, company, notes, status },
+  });
+  if (!written.count) {
+    return NextResponse.json({ message: "Customer not found or access denied" }, { status: 404 });
+  }
+
+  const customer = await prisma.customer.findFirst({
+    where: { id, ...customerOwnedByUserOrAdmin(session) },
   });
 
   return NextResponse.json({ customer });
@@ -128,16 +135,22 @@ export async function DELETE(
     return NextResponse.json({ message: "Customer not found or access denied" }, { status: 404 });
   }
 
-  await prisma.$transaction([
-    prisma.customer.update({
-      where: { id },
+  const deleted = await prisma.$transaction(async (tx) => {
+    const customers = await tx.customer.updateMany({
+      where: { id, ...customerOwnedByUserOrAdmin(session), ...notDeleted },
       data: softDeleteData(session.user.id),
-    }),
-    prisma.demandRecord.updateMany({
+    });
+    if (!customers.count) return customers;
+    await tx.demandRecord.updateMany({
       where: { customerId: id, ...notDeleted },
       data: softDeleteData(session.user.id, "Deleted along with customer"),
-    }),
-  ]);
+    });
+    return customers;
+  });
+
+  if (!deleted.count) {
+    return NextResponse.json({ message: "Customer not found or access denied" }, { status: 404 });
+  }
 
   return NextResponse.json({ success: true });
 }

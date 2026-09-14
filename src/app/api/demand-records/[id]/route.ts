@@ -132,11 +132,22 @@ export async function PATCH(
   }
 
   try {
-    const updated = await prisma.demandRecord.update({
-      where: { id },
+    // Atomic scoped write: the gate above could go stale, so ownership is
+    // re-asserted in the write itself. A victim id yields count 0, not a leak.
+    const written = await prisma.demandRecord.updateMany({
+      where: { id, ...senderOwnedByUserOrAdmin(session), ...notDeleted },
       data,
+    });
+    if (!written.count) {
+      return NextResponse.json({ message: "Record not found or access denied" }, { status: 404 });
+    }
+    const updated = await prisma.demandRecord.findFirst({
+      where: { id, ...senderOwnedByUserOrAdmin(session) },
       include: { sender: true, customer: true },
     });
+    if (!updated) {
+      return NextResponse.json({ message: "Record not found or access denied" }, { status: 404 });
+    }
 
     // Serialize BigInt / Date fields
     const result = { ...updated } as Record<string, unknown>;

@@ -126,8 +126,8 @@ export async function PATCH(req: NextRequest) {
     // Attribute revenue to the close month: auto-stamp when a deal moves
     // into WON/LOST without an explicit date. Moving away keeps history.
     const now = new Date();
-    const deal = await prisma.deal.update({
-      where: { id: existing.id },
+    const written = await prisma.deal.updateMany({
+      where: { id: existing.id, ...ownedByUserOrAdmin(session), ...notDeleted },
       data: {
         ...dealData,
         ...(dealData.stage === "WON" && !existing.wonAt && dealData.wonAt === undefined
@@ -143,8 +143,17 @@ export async function PATCH(req: NextRequest) {
             : { customer: { disconnect: true } }),
         ...(items ? { items: { deleteMany: {}, create: items } } : {}),
       },
+    });
+    if (!written.count) {
+      return NextResponse.json({ message: "Deal not found" }, { status: 404 });
+    }
+    const deal = await prisma.deal.findFirst({
+      where: { id: existing.id, ...ownedByUserOrAdmin(session) },
       include: dealInclude,
     });
+    if (!deal) {
+      return NextResponse.json({ message: "Deal not found" }, { status: 404 });
+    }
     return NextResponse.json({ deal });
   } catch (error) {
     if (error instanceof Error && error.message === "Selected product was not found") {

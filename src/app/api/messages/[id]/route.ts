@@ -48,16 +48,22 @@ export async function DELETE(
     )];
     if (fileNames.length > 0) {
       await prisma.qADocument.deleteMany({
-        where: { fileName: { in: fileNames } },
+        where: { fileName: { in: fileNames }, userId: session.user.id },
       });
     }
 
-    // Delete the message — DemandRecord and PendingDemandImport cascade automatically
-    await prisma.telegramMessage.delete({ where: { id } });
+    // Delete the message — DemandRecord and PendingDemandImport cascade automatically.
+    // Scoped delete so a concurrent/stale pre-check can't remove another tenant's row.
+    const deleted = await prisma.telegramMessage.deleteMany({
+      where: { id, ...senderOwnedByUserOrAdmin(session) },
+    });
+    if (!deleted.count) {
+      return NextResponse.json({ message: "Message not found" }, { status: 404 });
+    }
 
-    // Decrement the sender's messageCount
-    await prisma.telegramSender.update({
-      where: { id: message.senderId },
+    // Decrement the sender's messageCount (sender is owned via the scoped message above)
+    await prisma.telegramSender.updateMany({
+      where: { id: message.senderId, userId: session.user.id },
       data: { messageCount: { decrement: 1 } },
     });
 

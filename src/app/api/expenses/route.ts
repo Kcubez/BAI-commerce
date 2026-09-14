@@ -34,7 +34,14 @@ export async function PATCH(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid expense" }, { status: 400 });
   const existing = await prisma.expense.findFirst({ where: { id: body.id, ...ownedByUserOrAdmin(session), ...notDeleted } });
   if (!existing) return NextResponse.json({ message: "Expense not found" }, { status: 404 });
-  const expense = await prisma.expense.update({ where: { id: existing.id }, data: parsed.data });
+  const written = await prisma.expense.updateMany({
+    where: { id: existing.id, ...ownedByUserOrAdmin(session), ...notDeleted },
+    data: parsed.data,
+  });
+  if (!written.count) return NextResponse.json({ message: "Expense not found" }, { status: 404 });
+  const expense = await prisma.expense.findFirst({
+    where: { id: existing.id, ...ownedByUserOrAdmin(session) },
+  });
   return NextResponse.json({ expense });
 }
 

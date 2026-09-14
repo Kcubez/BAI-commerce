@@ -126,11 +126,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const loaded = await loadOwnedDeal(req, id);
   if (loaded.error) return loaded.error;
 
-  // Soft-delete so Trash can restore the record later.
-  await prisma.deal.update({
-    where: { id },
+  // Atomic scoped write (no nested writes here, so updateMany works).
+  const written = await prisma.deal.updateMany({
+    where: { id: loaded.deal.id, userId: loaded.session.user.id, ...notDeleted },
     data: softDeleteData(loaded.session.user.id, "Deleted from customers workspace"),
   });
+  if (!written.count) {
+    return NextResponse.json({ message: "Record not found" }, { status: 404 });
+  }
 
   return NextResponse.json({ success: true });
 }

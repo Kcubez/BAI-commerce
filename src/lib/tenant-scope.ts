@@ -7,21 +7,21 @@ export function isAdminSession(session: Session) {
 }
 
 export function ownedByUserOrAdmin(session: Session, ownerField = "userId") {
-  if (!session || isAdminSession(session)) return {};
+  if (!session) return {};
   return { [ownerField]: session.user.id };
 }
 
 export function uploadedByUserOrAdmin(session: Session) {
-  if (!session || isAdminSession(session)) return {};
+  if (!session) return {};
   return { uploadedByUserId: session.user.id };
 }
 
 export function senderOwnedByUserOrAdmin(session: Session) {
-  if (!session || isAdminSession(session)) return {};
+  if (!session) return {};
   return { sender: { userId: session.user.id } };
 }
 
 export function customerOwnedByUserOrAdmin(session: Session) {
-  if (!session || isAdminSession(session)) return {};
+  if (!session) return {};
   return { userId: session.user.id };
 }

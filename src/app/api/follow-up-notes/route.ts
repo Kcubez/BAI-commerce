@@ -51,9 +51,11 @@ export async function PATCH(req: NextRequest) {
   const existing = await prisma.followUpNote.findFirst({ where: { id: body.id, deal: { ...ownedByUserOrAdmin(session), ...notDeleted } } });
   if (!existing) return NextResponse.json({ message: "Follow-up note not found" }, { status: 404 });
   if (parsed.data.dealId && !(await ownedDeal(parsed.data.dealId, session))) return NextResponse.json({ message: "Deal not found" }, { status: 404 });
-  const note = await prisma.followUpNote.update({
-    where: { id: existing.id },
+  const written = await prisma.followUpNote.updateMany({
+    where: { id: existing.id, deal: { ...ownedByUserOrAdmin(session), ...notDeleted } },
     data: { ...parsed.data, reviewedByUserId: session.user.id, reviewedAt: new Date() },
   });
+  if (!written.count) return NextResponse.json({ message: "Follow-up note not found" }, { status: 404 });
+  const note = await prisma.followUpNote.findFirst({ where: { id: existing.id } });
   return NextResponse.json({ note });
 }

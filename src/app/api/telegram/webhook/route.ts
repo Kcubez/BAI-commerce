@@ -877,22 +877,25 @@ function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
   }
 }
 
-async function buildQAContext(ownerUserId: string | null): Promise<string> {
-  const ownerWhere = ownerUserId ? { userId: ownerUserId } : {};
+async function buildQAContext(ownerUserId: string): Promise<string> {
+  // Fail closed: without an owner the queries below would drop their tenant
+  // filter and mix every tenant's data into the AI prompt. Never do that.
+  if (!ownerUserId) return "";
+  const ownerWhere = { userId: ownerUserId };
   const [demandRecords, qaDocs, customers, deals, products, expenses, marketingMetrics] = await Promise.all([
     prisma.demandRecord.findMany({
-      where: { ...(ownerUserId ? { sender: { userId: ownerUserId } } : {}), ...notDeleted },
+      where: { sender: { userId: ownerUserId }, ...notDeleted },
       orderBy: { createdAt: 'desc' },
       take: 10,
       include: { sender: true },
     }),
     prisma.qADocument.findMany({
-      where: ownerUserId ? { userId: ownerUserId } : {},
+      where: { userId: ownerUserId },
       orderBy: { createdAt: 'desc' },
       take: 10,
     }),
     prisma.customer.findMany({
-      where: { ...(ownerUserId ? { userId: ownerUserId } : {}), ...notDeleted },
+      where: { userId: ownerUserId, ...notDeleted },
       take: 20,
       orderBy: { updatedAt: 'desc' },
     }),
@@ -1575,11 +1578,13 @@ export async function POST(req: NextRequest) {
 
       if (data.startsWith('demand_import_confirm:')) {
         const pendingId = data.replace('demand_import_confirm:', '');
-        const pending = await prisma.pendingDemandImport.findUnique({
-          where: { id: pendingId },
+        // Bound to the confirming sender AND this bot's owner: a leaked or
+        // guessed pendingId from another sender/bot can never be imported here.
+        const pending = await prisma.pendingDemandImport.findFirst({
+          where: { id: pendingId, senderId: sender.id, sender: { userId: settings.userId } },
         });
 
-        if (!pending) {
+        if (!pending || (chatId && Number(pending.chatId) !== Number(chatId))) {
           await answerCallbackQuery(settings?.botToken, callbackQuery.id, 'Preview not found');
           return NextResponse.json({ ok: true });
         }
@@ -1698,11 +1703,13 @@ export async function POST(req: NextRequest) {
 
       if (data.startsWith('demand_import_cancel:')) {
         const pendingId = data.replace('demand_import_cancel:', '');
-        const pending = await prisma.pendingDemandImport.findUnique({
-          where: { id: pendingId },
+        // Same binding as confirm: only the owning sender on this bot's
+        // owner can cancel a preview (prevents cross-user cancel DoS).
+        const pending = await prisma.pendingDemandImport.findFirst({
+          where: { id: pendingId, senderId: sender.id, sender: { userId: settings.userId } },
         });
 
-        if (!pending) {
+        if (!pending || (chatId && Number(pending.chatId) !== Number(chatId))) {
           await answerCallbackQuery(settings?.botToken, callbackQuery.id, 'Preview not found');
           return NextResponse.json({ ok: true });
         }
@@ -2510,6 +2517,14 @@ export async function POST(req: NextRequest) {
 
     // ─── Q & A Mode ───────────────────────────────────────────────────
     if (activeMode === 'qa') {
+      if (!settings.userId) {
+        await sendTelegramMessage({
+          botToken: settings?.botToken,
+          chatId,
+          text: "⚠️ Q&A အသုံးပြုရန် business owner account နှင့် link လုပ်ထားရန်လိုအပ်ပါသည်။",
+        });
+        return NextResponse.json({ ok: true });
+      }
       if (!settings?.geminiApiKey) {
         await sendTelegramMessage({
           botToken: settings?.botToken,
@@ -2724,6 +2739,15 @@ export async function POST(req: NextRequest) {
         receivedAt,
       });
       if (!telegramMessage) return NextResponse.json({ ok: true });
+
+      if (!settings.userId) {
+        await sendTelegramMessage({
+          botToken: settings?.botToken,
+          chatId,
+          text: "⚠️ Order / customer မှတ်တမ်း သိမ်းရန် business owner account နှင့် link လုပ်ထားရန်လိုအပ်ပါသည်။",
+        });
+        return NextResponse.json({ ok: true });
+      }
 
       const parsed = await parseCommerceMessageWithGemini({
         text: message.text,

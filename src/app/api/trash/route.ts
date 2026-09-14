@@ -71,8 +71,9 @@ function scopedWhere(
   type: TrashType,
   session: NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>,
 ) {
-  if (isAdminSession(session)) return {};
-
+  // Data isolation: every account (including admin) only sees its own trash.
+  // Admin-only capabilities (restore_all, single restore) stay gated by
+  // isAdminSession at their call sites — this scope only limits *whose* rows.
   switch (type) {
     case "customers":
       return { userId: session.user.id };
@@ -311,19 +312,62 @@ async function listByType(
   }
 }
 
+type TrashSession = NonNullable<Awaited<ReturnType<typeof auth.api.getSession>>>;
+
+// True when `id` names a trashed row of `type` owned by the session user.
+// This is the ownership gate for single-record restore / permanent-delete /
+// restore-request actions, so one tenant can never address another's rows.
+async function isOwnedTrashedRecord(
+  type: TrashType,
+  session: TrashSession,
+  id: string,
+): Promise<boolean> {
+  const where = { id, ...trashWhere(type, session, null, null) };
+
+  switch (type) {
+    case "customers":
+      return Boolean(await prisma.customer.findFirst({ where, select: { id: true } }));
+    case "sales":
+      return Boolean(await prisma.demandRecord.findFirst({ where, select: { id: true } }));
+    case "finance":
+      return Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
+    case "financeEntries":
+      return Boolean(await prisma.financeEntry.findFirst({ where, select: { id: true } }));
+    case "products":
+      return Boolean(await prisma.product.findFirst({ where, select: { id: true } }));
+    case "deals":
+      return Boolean(await prisma.deal.findFirst({ where, select: { id: true } }));
+    case "expenses":
+      return Boolean(await prisma.expense.findFirst({ where, select: { id: true } }));
+    case "marketing":
+      return Boolean(await prisma.marketingMetric.findFirst({ where, select: { id: true } }));
+  }
+}
+
+// True when anyone holds a pending restore request for this record. Admins
+// may act on foreign rows only through this channel (plus their own rows) —
+// never by guessing IDs.
+async function hasPendingRestoreRequest(type: TrashType, id: string): Promise<boolean> {
+  const hit = await prisma.restoreRequest.findFirst({
+    where: { recordType: type, recordId: id, status: "pending" },
+    select: { id: true },
+  });
+  return Boolean(hit);
+}
+
 async function restoreRecord(
   type: TrashType,
-  id: string,
+  ids: string[],
   userId: string,
 ) {
-  const where = { id, ...onlyDeleted };
+  const where = { id: { in: ids }, ...onlyDeleted };
   const data = restoreData(userId);
 
   switch (type) {
     case "customers": {
       const result = await prisma.customer.updateMany({ where, data });
       await prisma.demandRecord.updateMany({
-        where: { customerId: id, deletedReason: "Deleted along with customer", ...onlyDeleted },
+        where: { customerId: { in: ids }, deletedReason: "Deleted along with customer", ...onlyDeleted },
         data: restoreData(userId),
       });
       return result;
@@ -345,13 +389,13 @@ async function restoreRecord(
   }
 }
 
-async function permanentlyDeleteRecord(type: TrashType, id: string) {
-  const where = { id, ...onlyDeleted };
+async function permanentlyDeleteRecord(type: TrashType, ids: string[]) {
+  const where = { id: { in: ids }, ...onlyDeleted };
 
   switch (type) {
     case "customers": {
       await prisma.demandRecord.deleteMany({
-        where: { customerId: id, deletedReason: "Deleted along with customer", ...onlyDeleted },
+        where: { customerId: { in: ids }, deletedReason: "Deleted along with customer", ...onlyDeleted },
       });
       return prisma.customer.deleteMany({ where });
     }
@@ -484,6 +528,30 @@ export async function POST(req: NextRequest) {
             ids = (await tx.marketingMetric.findMany({ where, select: { id: true } })).map((record) => record.id);
             await tx.marketingMetric.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
             break;
+        }
+        // Admins restore on behalf of requesters too: include trashed rows
+        // with a pending restore request (only trashed rows are affected —
+        // the update below re-applies ...onlyDeleted).
+        const requested = await tx.restoreRequest.findMany({
+          where: { recordType: t, status: "pending" },
+          select: { recordId: true },
+        });
+        if (requested.length > 0) {
+          ids = [...new Set([...ids, ...requested.map((r) => r.recordId)])];
+          if (t === "customers") {
+            // The customers cascade above ran for owned ids only; extend it
+            // to requested rows (already-restored rows are skipped by
+            // ...onlyDeleted, so this is a no-op for them).
+            await tx.customer.updateMany({ where: { id: { in: ids }, ...onlyDeleted }, data });
+            await tx.demandRecord.updateMany({
+              where: {
+                customerId: { in: ids },
+                deletedReason: "Deleted along with customer",
+                ...onlyDeleted,
+              },
+              data,
+            });
+          }
         }
         if (ids.length > 0) {
           await tx.restoreRequest.updateMany({
@@ -633,7 +701,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Admin access required to restore records" }, { status: 403 });
   }
 
-  const result = await restoreRecord(type, id, session.user.id);
+  if (!isTrashType(type) || typeof id !== "string") {
+    return NextResponse.json({ message: "Invalid trash record" }, { status: 400 });
+  }
+
+  // Admins may restore their own rows freely; foreign rows only when a
+  // pending restore request names them (ID guessing alone is not enough).
+  const owned = await isOwnedTrashedRecord(type, session, id);
+  if (!owned && !(await hasPendingRestoreRequest(type, id))) {
+    return NextResponse.json({ message: "Trash record not found or access denied" }, { status: 404 });
+  }
+
+  const result = await restoreRecord(type, [id], session.user.id);
   await prisma.restoreRequest.updateMany({
     where: { recordType: type, recordId: id, status: "pending" },
     data: {
@@ -653,8 +732,8 @@ export async function DELETE(req: NextRequest) {
   const { type, id, confirmation, action, dateFrom, dateTo } = body;
 
   // Bulk path enforces tenancy itself: its loop combines
-  // scopedWhere(t, session) + onlyDeleted + date range, so non-admins can
-  // only ever delete their own trashed rows (admins: everything, as before).
+  // scopedWhere(t, session) + onlyDeleted + date range, so every account
+  // (including admin) can only ever delete its own trashed rows.
   if (action === "delete_all") {
     if (confirmation !== "PERMANENT DELETE ALL") {
       return NextResponse.json({ message: "Type PERMANENT DELETE ALL to confirm" }, { status: 400 });
@@ -732,49 +811,23 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ message: "Invalid trash record" }, { status: 400 });
   }
 
-  // Non-admins may permanently delete only their own trashed records
-  // (same scoped + onlyDeleted existence check as request_restore).
-  if (!isAdminSession(session)) {
-    const where = { id, ...trashWhere(type, session, null, null) };
-    let exists = false;
-
-    switch (type) {
-      case "customers":
-        exists = Boolean(await prisma.customer.findFirst({ where, select: { id: true } }));
-        break;
-      case "sales":
-        exists = Boolean(await prisma.demandRecord.findFirst({ where, select: { id: true } }));
-        break;
-        case "finance":
-          exists = Boolean(await prisma.businessReport.findFirst({ where, select: { id: true } }));
-          break;
-        case "financeEntries":
-          exists = Boolean(await prisma.financeEntry.findFirst({ where, select: { id: true } }));
-          break;
-      case "products":
-        exists = Boolean(await prisma.product.findFirst({ where, select: { id: true } }));
-        break;
-      case "deals":
-        exists = Boolean(await prisma.deal.findFirst({ where, select: { id: true } }));
-        break;
-      case "expenses":
-        exists = Boolean(await prisma.expense.findFirst({ where, select: { id: true } }));
-        break;
-      case "marketing":
-        exists = Boolean(await prisma.marketingMetric.findFirst({ where, select: { id: true } }));
-        break;
-    }
-
-    if (!exists) {
-      return NextResponse.json({ message: "Trash record not found or access denied" }, { status: 404 });
-    }
+  // Permanent delete is allowed for your own trashed rows. Admins may
+  // additionally act on a foreign row named by a pending restore request
+  // (e.g. rejecting the request by deleting); ID guessing alone is denied.
+  const owned = await isOwnedTrashedRecord(type, session, id);
+  let allowed = owned;
+  if (!allowed && isAdminSession(session)) {
+    allowed = await hasPendingRestoreRequest(type, id);
+  }
+  if (!allowed) {
+    return NextResponse.json({ message: "Trash record not found or access denied" }, { status: 404 });
   }
 
   if (confirmation !== "PERMANENT DELETE") {
     return NextResponse.json({ message: "Type PERMANENT DELETE to confirm" }, { status: 400 });
   }
 
-  const result = await permanentlyDeleteRecord(type, id);
+  const result = await permanentlyDeleteRecord(type, [id]);
   await prisma.restoreRequest.updateMany({
     where: { recordType: type, recordId: id, status: "pending" },
     data: {
