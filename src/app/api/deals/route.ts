@@ -2,9 +2,20 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted, softDeleteData } from "@/lib/soft-delete";
 import { ownedByUserOrAdmin } from "@/lib/tenant-scope";
-import { dealSchema } from "@/lib/validations";
+import { dealItemSchema, dealSchema, dealStages, fulfillmentStatuses } from "@/lib/validations";
+import * as z from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+
+// PATCH must not inherit field defaults (e.g. items: []) — a missing key
+// means "leave unchanged", not "reset". Overriding with plain optionals
+// also keeps updateMany scalar-only (Prisma rejects relational writes there).
+const dealPatchSchema = dealSchema.partial().extend({
+  stage: z.enum(dealStages).optional(),
+  fulfillmentStatus: z.enum(fulfillmentStatuses).optional(),
+  source: z.string().trim().min(1).max(100).optional(),
+  items: z.array(dealItemSchema).max(100).optional(),
+});
 
 const dealInclude = {
   customer: { select: { id: true, name: true, phone: true, email: true } },
@@ -110,7 +121,7 @@ export async function PATCH(req: NextRequest) {
 
   const body = await req.json();
   if (typeof body.id !== "string") return NextResponse.json({ message: "Deal ID is required" }, { status: 400 });
-  const parsed = dealSchema.partial().safeParse(body);
+  const parsed = dealPatchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid deal" }, { status: 400 });
 
   const existing = await prisma.deal.findFirst({ where: { id: body.id, ...ownedByUserOrAdmin(session), ...notDeleted } });
@@ -120,29 +131,54 @@ export async function PATCH(req: NextRequest) {
   }
 
   try {
-    const items = parsed.data.items ? await buildItems(parsed.data.items, session) : undefined;
+    // Only touch line items when the caller explicitly sent them — otherwise
+    // every status-only edit would wipe them (and crash below on updateMany).
+    const itemsInput = "items" in body ? parsed.data.items : undefined;
+    const items = itemsInput ? await buildItems(itemsInput, session) : undefined;
     const { customerId, items: _items, ...dealData } = parsed.data;
     void _items;
     // Attribute revenue to the close month: auto-stamp when a deal moves
     // into WON/LOST without an explicit date. Moving away keeps history.
     const now = new Date();
-    const written = await prisma.deal.updateMany({
-      where: { id: existing.id, ...ownedByUserOrAdmin(session), ...notDeleted },
-      data: {
-        ...dealData,
-        ...(dealData.stage === "WON" && !existing.wonAt && dealData.wonAt === undefined
-          ? { wonAt: now }
-          : {}),
-        ...(dealData.stage === "LOST" && !existing.lostAt && dealData.lostAt === undefined
-          ? { lostAt: now }
-          : {}),
-        ...(customerId === undefined
-          ? {}
-          : customerId
-            ? { customer: { connect: { id: customerId } } }
-            : { customer: { disconnect: true } }),
-        ...(items ? { items: { deleteMany: {}, create: items } } : {}),
-      },
+    const scalarData: Prisma.DealUpdateManyMutationInput = {
+      ...dealData,
+      ...(dealData.stage === "WON" && !existing.wonAt && dealData.wonAt === undefined
+        ? { wonAt: now }
+        : {}),
+      ...(dealData.stage === "LOST" && !existing.lostAt && dealData.lostAt === undefined
+        ? { lostAt: now }
+        : {}),
+    };
+    const relationData: Prisma.DealUpdateInput = {
+      ...(customerId === undefined
+        ? {}
+        : customerId
+          ? { customer: { connect: { id: customerId } } }
+          : { customer: { disconnect: true } }),
+      // Nested writes are rejected by updateMany, so items go through a
+      // single-record update inside the same transaction below.
+      ...(items ? { items: { deleteMany: {}, create: items } } : {}),
+    };
+    const hasRelations = Object.keys(relationData).length > 0;
+    const written = await prisma.$transaction(async (tx) => {
+      // Scalar-only write keeps the tenant/soft-delete guard atomic.
+      if (Object.keys(scalarData).length > 0) {
+        const updated = await tx.deal.updateMany({
+          where: { id: existing.id, ...ownedByUserOrAdmin(session), ...notDeleted },
+          data: scalarData,
+        });
+        if (!updated.count) return updated;
+      } else {
+        const stillThere = await tx.deal.findFirst({
+          where: { id: existing.id, ...ownedByUserOrAdmin(session), ...notDeleted },
+          select: { id: true },
+        });
+        if (!stillThere) return { count: 0 };
+      }
+      if (hasRelations) {
+        await tx.deal.update({ where: { id: existing.id }, data: relationData });
+      }
+      return { count: 1 };
     });
     if (!written.count) {
       return NextResponse.json({ message: "Deal not found" }, { status: 404 });

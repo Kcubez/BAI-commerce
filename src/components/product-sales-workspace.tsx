@@ -921,25 +921,21 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
   const [isDeleting, setIsDeleting] = useState(false);
 
   const [dealForm, setDealForm] = useState({
-    title: '',
-    customerName: '',
     quotedAmount: '',
     stage: 'NEW_LEAD',
     fulfillmentStatus: 'PENDING',
     sourceChannel: 'Direct',
-    notes: '',
+    note: '',
   });
 
   const openAddDeal = () => {
     setEditingDeal(null);
     setDealForm({
-      title: '',
-      customerName: '',
       quotedAmount: '',
       stage: 'NEW_LEAD',
       fulfillmentStatus: 'PENDING',
       sourceChannel: 'Direct',
-      notes: '',
+      note: '',
     });
     setDealDialogOpen(true);
   };
@@ -947,37 +943,26 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
   const openEditDeal = (deal: DealRecord) => {
     setEditingDeal(deal);
     setDealForm({
-      title: deal.title || '',
-      customerName: deal.customer?.name || '',
       quotedAmount: deal.quotedAmount ? String(deal.quotedAmount) : '',
       stage: deal.stage || 'NEW_LEAD',
       fulfillmentStatus: deal.fulfillmentStatus || 'PENDING',
       sourceChannel: deal.sourceChannel || 'Direct',
-      notes: deal.notes || '',
+      note: deal.note || '',
     });
     setDealDialogOpen(true);
   };
 
   const saveDeal = async (e: FormEvent) => {
     e.preventDefault();
-    if (!dealForm.title.trim()) {
-      toast.error('Deal title is required');
-      return;
-    }
     setIsSaving(true);
     try {
       const payload: Record<string, unknown> = {
-        title: dealForm.title.trim(),
         stage: dealForm.stage,
         fulfillmentStatus: dealForm.fulfillmentStatus,
         sourceChannel: dealForm.sourceChannel,
         quotedAmount: dealForm.quotedAmount ? Number(dealForm.quotedAmount) : null,
-        notes: dealForm.notes.trim() || null,
+        note: dealForm.note.trim() || null,
       };
-
-      if (dealForm.customerName.trim()) {
-        payload.customerName = dealForm.customerName.trim();
-      }
 
       const res = await fetch('/api/deals', {
         method: editingDeal ? 'PATCH' : 'POST',
@@ -985,7 +970,14 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
         body: JSON.stringify(editingDeal ? { id: editingDeal.id, ...payload } : payload),
       });
 
-      if (!res.ok) throw new Error('Failed to save deal');
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => null);
+        throw new Error(
+          typeof errorBody?.message === 'string' && errorBody.message
+            ? errorBody.message
+            : 'Failed to save deal',
+        );
+      }
       toast.success(editingDeal ? 'Deal updated' : 'Deal created');
       setDealDialogOpen(false);
       await queryClient.invalidateQueries({ queryKey: dealsKeys.all });
@@ -1016,9 +1008,11 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
 
   const filteredDeals = deals.filter((deal) => {
     const matchesStage = stageFilter === 'ALL' || deal.stage === stageFilter;
-    const matchesSearch = !dealSearch.trim() || 
-      deal.title.toLowerCase().includes(dealSearch.toLowerCase()) || 
-      (deal.customer?.name && deal.customer.name.toLowerCase().includes(dealSearch.toLowerCase()));
+    const query = dealSearch.trim().toLowerCase();
+    const matchesSearch = !query ||
+      (deal.customer?.name && deal.customer.name.toLowerCase().includes(query)) ||
+      (deal.note && deal.note.toLowerCase().includes(query)) ||
+      (deal.sourceChannel && deal.sourceChannel.toLowerCase().includes(query));
     return matchesStage && matchesSearch;
   });
 
@@ -1162,7 +1156,7 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
                         {deal.fulfillmentStatus}
                       </span>
                     </td>
-                    <td className="max-w-40 truncate px-5 py-4 text-xs text-slate-500">{deal.sourceChannel || deal.notes || '—'}</td>
+                    <td className="max-w-40 truncate px-5 py-4 text-xs text-slate-500">{deal.sourceChannel || deal.note || '—'}</td>
                     <td className="px-5 py-4 text-center">
                       <div className="flex items-center justify-center gap-1.5">
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700" onClick={() => openEditDeal(deal)}><Pencil className="h-3.5 w-3.5" /></Button>
@@ -1204,19 +1198,15 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
             <DialogDescription>Record deal details, customer, pricing, and stage.</DialogDescription>
           </DialogHeader>
           <form className="grid gap-4" onSubmit={saveDeal}>
-            <div className="grid gap-2">
-              <label className="text-xs font-bold">Deal Title *</label>
-              <Input value={dealForm.title} onChange={(e) => setDealForm({ ...dealForm, title: e.target.value })} placeholder="e.g. Bulk Order 100pcs" required />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <label className="text-xs font-bold">Customer Name</label>
-                <Input value={dealForm.customerName} onChange={(e) => setDealForm({ ...dealForm, customerName: e.target.value })} placeholder="Customer name" />
+            {editingDeal && (
+              <div className="grid gap-2">
+                <label className="text-xs font-bold">Customer</label>
+                <Input value={editingDeal.customer?.name || '—'} disabled className="bg-muted" />
               </div>
-              <div className="grid gap-1.5">
-                <label className="text-xs font-bold">Quoted Amount (MMK)</label>
-                <Input type="number" value={dealForm.quotedAmount} onChange={(e) => setDealForm({ ...dealForm, quotedAmount: e.target.value })} placeholder="0" />
-              </div>
+            )}
+            <div className="grid gap-1.5">
+              <label className="text-xs font-bold">Quoted Amount (MMK)</label>
+              <Input type="number" value={dealForm.quotedAmount} onChange={(e) => setDealForm({ ...dealForm, quotedAmount: e.target.value })} placeholder="0" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
@@ -1252,7 +1242,7 @@ function SalesWorkspace({ data, recommendations, isRecommendationsLoading, dateF
             </div>
             <div className="grid gap-1.5">
               <label className="text-xs font-bold">Notes</label>
-              <Input value={dealForm.notes} onChange={(e) => setDealForm({ ...dealForm, notes: e.target.value })} placeholder="Additional remarks" />
+              <Input value={dealForm.note} onChange={(e) => setDealForm({ ...dealForm, note: e.target.value })} placeholder="Additional remarks" />
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setDealDialogOpen(false)}>Cancel</Button>

@@ -804,20 +804,17 @@ export type DealItem = {
 
 export type DealRecord = {
   id: string;
-  title: string;
   customerId: string | null;
   customer?: { id: string; name: string; phone: string | null; email: string | null } | null;
   stage: "NEW_LEAD" | "QUOTED" | "FOLLOW_UP_NEEDED" | "PENDING" | "WON" | "LOST";
   quotedAmount: number | null;
-  probability: number;
-  expectedCloseDate: string | null;
   wonAt: string | null;
+  lostAt: string | null;
   lostReason: string | null;
   fulfillmentStatus: "NOT_APPLICABLE" | "PENDING" | "PROCESSING" | "FULFILLED" | "CANCELLED";
-  paymentStatus: "UNPAID" | "PARTIAL" | "PAID";
   source: string;
   sourceChannel: string | null;
-  notes: string | null;
+  note: string | null;
   createdAt: string;
   updatedAt: string;
   items: DealItem[];
@@ -828,19 +825,16 @@ export type DealsResponse = {
 };
 
 export type DealInput = {
-  title: string;
   customerId?: string | null;
   stage?: "NEW_LEAD" | "QUOTED" | "FOLLOW_UP_NEEDED" | "PENDING" | "WON" | "LOST";
   quotedAmount?: number | null;
-  probability?: number;
-  expectedCloseDate?: string | null;
   wonAt?: string | null;
+  lostAt?: string | null;
   lostReason?: string | null;
   fulfillmentStatus?: "NOT_APPLICABLE" | "PENDING" | "PROCESSING" | "FULFILLED" | "CANCELLED";
-  paymentStatus?: "UNPAID" | "PARTIAL" | "PAID";
   source?: string;
   sourceChannel?: string | null;
-  notes?: string | null;
+  note?: string | null;
   items?: DealItem[];
 };
 
