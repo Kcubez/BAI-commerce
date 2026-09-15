@@ -34,8 +34,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSyncPolling } from '@/hooks/use-sync-polling';
+import { queryClient } from '@/lib/query-client';
 import { toast } from 'sonner';
 
 type NavItem = {
@@ -102,6 +103,18 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
   // Poll for background Telegram updates and auto-refresh TanStack Query client
   useSyncPolling(!isSessionPending && !isAdmin && !isBusinessOwnerOnAdminRoute);
 
+  // Query cache has no per-user keys, so a different login in the same tab
+  // would briefly see the previous account's rows (and PATCH them into a
+  // 404). Drop the whole cache whenever the session user changes.
+  const sessionUserId = session?.user?.id;
+  const prevUserIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== sessionUserId) {
+      queryClient.clear();
+    }
+    prevUserIdRef.current = sessionUserId;
+  }, [sessionUserId]);
+
   useEffect(() => {
     if (isAdminOnRestrictedRoute) {
       router.replace('/admin/users');
@@ -123,6 +136,9 @@ export function DashboardLayoutClient({ children }: { children: React.ReactNode 
       }
 
       toast.success(isAdmin ? 'Admin signed out successfully' : 'Signed out successfully');
+      // Never leave the previous account's rows in cache: the next login in
+      // this tab must start from loading state, not stale deals/customers.
+      queryClient.clear();
       router.push(isAdmin ? '/admin/login' : '/login');
       router.refresh();
     } catch {
