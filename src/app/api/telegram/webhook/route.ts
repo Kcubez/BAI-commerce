@@ -1558,7 +1558,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const settings = await getActiveBotSettings(req);
     if (!settings?.botToken) {
-      return NextResponse.json({ error: "Unauthorized bot webhook" }, { status: 401 });
+      return NextResponse.json({ message: "Unauthorized bot webhook" }, { status: 401 });
     }
     const callbackQuery = body.callback_query;
 

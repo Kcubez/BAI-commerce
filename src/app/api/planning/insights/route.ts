@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
+import { CLOSED_DEMAND_STATUSES } from "@/lib/constants";
 import {
   ownedByUserOrAdmin,
   senderOwnedByUserOrAdmin,
@@ -160,7 +161,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const isClosedDemand = (status: string) => ["closed", "completed"].includes(status);
+  const isClosedDemand = (status: string) => CLOSED_DEMAND_STATUSES.includes(status);
   const isOpenDeal = (stage: string) => OPEN_DEAL_STAGES.includes(stage);
 
   const reportRevenue = reports.reduce((sum, report) => sum + number(report.totalSalesAmount), 0);

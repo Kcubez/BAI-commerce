@@ -42,7 +42,7 @@ export function SetupForm() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to initialize standard admin.');
+        throw new Error(data.message || 'Failed to initialize standard admin.');
       }
 
       router.push('/login?setup=success');

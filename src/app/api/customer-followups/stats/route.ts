@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
+import { CLOSED_DEMAND_STATUSES } from "@/lib/constants";
 import { customerOwnedByUserOrAdmin, senderOwnedByUserOrAdmin } from "@/lib/tenant-scope";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest) {
     prisma.demandRecord.count({
       where: {
         followUpDate: { not: null },
-        status: { notIn: ["closed", "completed"] },
+        status: { notIn: CLOSED_DEMAND_STATUSES },
         ...rangeWhere,
       },
     }),

@@ -2,7 +2,9 @@ import { auth } from "@/lib/auth";
 import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { notDeleted, restoreData, softDeleteData } from "@/lib/soft-delete";
+import { CLOSED_DEMAND_STATUSES } from "@/lib/constants";
 import { senderOwnedByUserOrAdmin } from "@/lib/tenant-scope";
+import { createDemandRecordSchema } from "@/lib/validations";
 import { NextRequest, NextResponse } from "next/server";
 
 function serializeDemandRecord(record: Record<string, unknown>) {
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
   if (status) {
     where.status = status;
   } else if (followUpStatus === "overdue" || followUpStatus === "due") {
-    where.status = { notIn: ["closed", "completed"] };
+    where.status = { notIn: CLOSED_DEMAND_STATUSES };
   }
   if (category) where.category = category;
   if (senderId) where.senderId = senderId;
@@ -139,7 +141,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  const parsed = createDemandRecordSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid demand record" }, { status: 400 });
+  }
   const {
     customerName,
     customerPhone,
@@ -151,7 +156,7 @@ export async function POST(req: NextRequest) {
     priority = "medium",
     status = "new",
     note = "",
-  } = body;
+  } = parsed.data;
 
   // 1. Resolve or create customer if raw name is provided
   let customerId: string | null = null;
@@ -227,15 +232,15 @@ export async function POST(req: NextRequest) {
   // 4. Run priority analysis using analyzeDemandRecord
   const { analyzeDemandRecord } = await import("@/lib/demand-analysis");
   const analysis = analyzeDemandRecord({
-    customerName,
-    customerPhone,
-    customerCompany,
-    serviceName,
-    serviceAmount,
-    serviceQty,
+    customerName: customerName ?? null,
+    customerPhone: customerPhone ?? null,
+    customerCompany: customerCompany ?? null,
+    serviceName: serviceName ?? null,
+    serviceAmount: serviceAmount ? parseFloat(String(serviceAmount)) : null,
+    serviceQty: serviceQty ? parseInt(String(serviceQty), 10) : null,
     followUpDate: followUpDate ? new Date(followUpDate) : null,
     status,
-    note,
+    note: note ?? "",
   });
 
   // 5. Create the demand record
@@ -244,13 +249,13 @@ export async function POST(req: NextRequest) {
       messageId: message.id,
       senderId: sender.id,
       customerId,
-      customerName,
+      customerName: customerName ?? null,
       category: "general",
       status,
-      note,
-      serviceName,
-      serviceAmount: serviceAmount ? parseFloat(serviceAmount) : null,
-      serviceQty: serviceQty ? parseInt(serviceQty) : null,
+      note: note ?? "",
+      serviceName: serviceName ?? null,
+      serviceAmount: serviceAmount ? parseFloat(String(serviceAmount)) : null,
+      serviceQty: serviceQty ? parseInt(String(serviceQty), 10) : null,
       followUpDate: followUpDate ? new Date(followUpDate) : null,
       followUpStatus: analysis.followUpStatus,
       priority,

@@ -1,15 +1,8 @@
-import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { requireAdmin } from "@/lib/require-admin";
 
 type Params = { params: Promise<{ id: string }> };
-
-async function requireAdmin(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (!session) return { error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }) };
-  if (session.user.role !== "admin") return { error: NextResponse.json({ message: "Forbidden" }, { status: 403 }) };
-  return { session };
-}
 
 // POST /api/admin/users/[id]/ban
 export async function POST(req: NextRequest, { params }: Params) {

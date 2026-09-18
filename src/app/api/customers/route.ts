@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { notDeleted, restoreData, softDeleteData } from "@/lib/soft-delete";
 import { customerOwnedByUserOrAdmin } from "@/lib/tenant-scope";
+import { createCustomerSchema, updateCustomerSchema } from "@/lib/validations";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
@@ -118,12 +119,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
-  const { name, phone, email, company, notes } = body;
-
-  if (!name) {
-    return NextResponse.json({ message: "Name is required" }, { status: 400 });
+  const parsed = createCustomerSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid customer" }, { status: 400 });
   }
+  const { name, phone, email, company, notes } = parsed.data;
 
   const nameNormalized = normalizeCustomerName(name);
   const existing = await prisma.customer.findFirst({
@@ -164,12 +164,11 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
-  const { id, name, phone, email, company, notes, status } = body;
-
-  if (!id) {
-    return NextResponse.json({ message: "ID is required" }, { status: 400 });
+  const parsed = updateCustomerSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid customer" }, { status: 400 });
   }
+  const { id, name, phone, email, company, notes, status } = parsed.data;
 
   const data: Record<string, unknown> = { phone, email, company, notes, status };
   if (typeof name === "string" && name.length > 0) {

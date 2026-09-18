@@ -8,7 +8,7 @@ export async function POST(req: Request) {
     const { name, email, password } = body;
 
     if (!name || !email || !password) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json({ message: "Missing required fields" }, { status: 400 });
     }
 
     // Use Better Auth's internal API to create the user properly
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
 
     if (!elevated) {
       return NextResponse.json(
-        { error: "Setup is already locked. Admin already exists." },
+        { message: "Setup is already locked. Admin already exists." },
         { status: 403 }
       );
     }
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     console.error("Setup Admin Error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create initial admin" },
+      { message: error instanceof Error ? error.message : "Failed to create initial admin" },
       { status: 500 }
     );
   }

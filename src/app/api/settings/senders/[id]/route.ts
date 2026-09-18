@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { updateSenderSchema } from "@/lib/validations";
 import { NextRequest, NextResponse } from "next/server";
 
 // PUT /api/settings/senders/[id] — update authorization status and allowed departments
@@ -13,8 +14,11 @@ export async function PUT(
   }
 
   const { id } = await params;
-  const body = await req.json();
-  const { isAuthorized, allowedDepartments } = body;
+  const parsed = updateSenderSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid sender" }, { status: 400 });
+  }
+  const { isAuthorized, allowedDepartments } = parsed.data;
 
   // Verify that the sender belongs to this Business Owner
   const sender = await prisma.telegramSender.findFirst({

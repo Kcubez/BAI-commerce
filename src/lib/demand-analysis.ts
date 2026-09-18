@@ -1,4 +1,5 @@
 import type { ParsedDemandRecord } from "@/lib/demand-parser";
+import { CLOSED_DEMAND_STATUSES } from "@/lib/constants";
 
 export type DemandPriority = "high" | "medium" | "low";
 
@@ -134,7 +135,7 @@ export function analyzeDemandRecord(record: DemandAnalysisInput): DemandAnalysis
 }
 
 export function buildBusinessInsights(records: Array<DemandAnalysisInput & DemandAnalysis>) {
-  const openRecords = records.filter((record) => !["closed", "completed"].includes(record.status));
+  const openRecords = records.filter((record) => !CLOSED_DEMAND_STATUSES.includes(record.status));
   const highPriority = openRecords.filter((record) => record.priority === "high");
   const missingPhone = openRecords.filter((record) => record.missingFields.includes("phone"));
   const overdue = openRecords.filter((record) => record.followUpStatus === "overdue");

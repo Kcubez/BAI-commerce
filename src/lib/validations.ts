@@ -141,6 +141,66 @@ export const followUpNoteSchema = z.object({
   status: z.enum(["DRAFT", "ACCEPTED", "EDITED", "DISMISSED"]).default("DRAFT"),
 });
 
+// ─── Customers ───────────────────────────────────────────────────────────────
+
+export const createCustomerSchema = z.object({
+  name: z.string().trim().min(1, { message: "Name is required" }),
+  phone: z.string().trim().max(40).optional().nullable(),
+  email: z.string().trim().max(160).optional().nullable(),
+  company: z.string().trim().max(160).optional().nullable(),
+  notes: z.string().trim().max(2000).optional().nullable(),
+});
+
+export const updateCustomerSchema = z.object({
+  id: z.string().min(1, { message: "ID is required" }),
+  name: z.string().optional(),
+  phone: z.string().trim().max(40).optional().nullable(),
+  email: z.string().trim().max(160).optional().nullable(),
+  company: z.string().trim().max(160).optional().nullable(),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  status: z.string().trim().max(40).optional(),
+});
+
+// ─── Demand Records ──────────────────────────────────────────────────────────
+
+const optionalNumberInput = z
+  .union([z.number(), z.string().trim().max(40), z.null()])
+  .optional()
+  .nullable();
+
+export const createDemandRecordSchema = z.object({
+  customerName: z.string().trim().max(200).optional().nullable(),
+  customerPhone: z.string().trim().max(40).optional().nullable(),
+  customerCompany: z.string().trim().max(200).optional().nullable(),
+  serviceName: z.string().trim().max(200).optional().nullable(),
+  serviceAmount: optionalNumberInput,
+  serviceQty: optionalNumberInput,
+  followUpDate: z.union([z.string().trim().max(40), z.null()]).optional().nullable(),
+  priority: z.string().trim().max(40).optional(),
+  status: z.string().trim().max(40).optional(),
+  note: z.string().max(5000).optional().nullable(),
+  reportType: z.string().trim().max(40).optional(),
+});
+
+// ─── Staff Senders ───────────────────────────────────────────────────────────
+
+export const createSenderSchema = z.object({
+  email: z.string().trim().min(1, { message: "Email is required" }),
+  allowedDepartments: z.array(z.string()).optional(),
+});
+
+export const updateSenderSchema = z.object({
+  isAuthorized: z.boolean().optional(),
+  allowedDepartments: z.array(z.string()).optional(),
+});
+
+// ─── Bot Settings ────────────────────────────────────────────────────────────
+
+export const updateBotSettingsSchema = z.object({
+  botToken: z.string().max(500).optional().nullable(),
+  geminiApiKey: z.string().max(500).optional().nullable(),
+});
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type LoginFormValues = z.infer<typeof loginSchema>;
@@ -153,3 +213,9 @@ export type ExpenseFormValues = z.infer<typeof expenseSchema>;
 export type MarketingMetricFormValues = z.infer<typeof marketingMetricSchema>;
 export type ExpenseBudgetFormValues = z.infer<typeof expenseBudgetSchema>;
 export type FollowUpNoteFormValues = z.infer<typeof followUpNoteSchema>;
+export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
+export type UpdateCustomerInput = z.infer<typeof updateCustomerSchema>;
+export type CreateDemandRecordInput = z.infer<typeof createDemandRecordSchema>;
+export type CreateSenderInput = z.infer<typeof createSenderSchema>;
+export type UpdateSenderInput = z.infer<typeof updateSenderSchema>;
+export type UpdateBotSettingsInput = z.infer<typeof updateBotSettingsSchema>;

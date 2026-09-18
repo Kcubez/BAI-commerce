@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { notDeleted } from "@/lib/soft-delete";
+import { CLOSED_DEMAND_STATUSES } from "@/lib/constants";
 import {
   customerOwnedByUserOrAdmin,
   ownedByUserOrAdmin,
@@ -142,7 +143,7 @@ export async function GET(req: NextRequest) {
       where: {
         priority: "high",
         ...demandScope,
-        status: { notIn: ["closed", "completed"] },
+        status: { notIn: CLOSED_DEMAND_STATUSES },
         createdAt: { gte: periodStart, lt: periodEnd },
       },
     }),
@@ -150,7 +151,7 @@ export async function GET(req: NextRequest) {
       where: {
         missingFields: { has: "phone" },
         ...demandScope,
-        status: { notIn: ["closed", "completed"] },
+        status: { notIn: CLOSED_DEMAND_STATUSES },
         createdAt: { gte: periodStart, lt: periodEnd },
       },
     }),
@@ -158,7 +159,7 @@ export async function GET(req: NextRequest) {
       where: {
         followUpStatus: "overdue",
         ...demandScope,
-        status: { notIn: ["closed", "completed"] },
+        status: { notIn: CLOSED_DEMAND_STATUSES },
         createdAt: { gte: periodStart, lt: periodEnd },
       },
     }),

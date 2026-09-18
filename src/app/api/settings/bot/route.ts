@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { updateBotSettingsSchema } from "@/lib/validations";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 
@@ -49,8 +50,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
-  const { botToken, geminiApiKey } = body;
+  const parsed = updateBotSettingsSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ message: parsed.error.issues[0]?.message ?? "Invalid bot settings" }, { status: 400 });
+  }
+  const { botToken, geminiApiKey } = parsed.data;
 
   try {
     // Build the webhook URL from the current request origin

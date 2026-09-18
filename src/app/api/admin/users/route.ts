@@ -2,17 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { createUserSchema } from "@/lib/validations";
-
-async function requireAdmin(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  if (!session) {
-    return { error: NextResponse.json({ message: "Unauthorized" }, { status: 401 }) };
-  }
-  if (session.user.role !== "admin") {
-    return { error: NextResponse.json({ message: "Forbidden" }, { status: 403 }) };
-  }
-  return { session };
-}
+import { requireAdmin } from "@/lib/require-admin";
 
 // GET /api/admin/users — list all users
 export async function GET(req: NextRequest) {
