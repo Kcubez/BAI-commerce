@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import * as XLSX from "xlsx";
+import { convertBurmeseDigits } from "@/lib/text-normalize";
 
 export const REPORT_TYPES = {
   DEMAND_REPORT: "demand_report",
@@ -74,15 +75,6 @@ async function generateContentWithRetry(
     }
   }
   throw lastError;
-}
-
-const BURMESE_DIGITS: Record<string, string> = {
-  '\u1040': '0', '\u1041': '1', '\u1042': '2', '\u1043': '3', '\u1044': '4',
-  '\u1045': '5', '\u1046': '6', '\u1047': '7', '\u1048': '8', '\u1049': '9',
-};
-
-function convertBurmeseDigits(text: string): string {
-  return text.replace(/[\u1040-\u1049]/g, (d) => BURMESE_DIGITS[d] || d);
 }
 
 function extractNumber(text: string, patterns: RegExp[]): number | null {

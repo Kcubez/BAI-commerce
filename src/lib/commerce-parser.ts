@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { convertBurmeseDigits } from "@/lib/text-normalize";
 
 export type CommerceIntent = "price_inquiry" | "order" | "delivery" | "complaint" | "interested" | "general";
 
@@ -24,7 +25,7 @@ export type ParsedCommerceMessage = {
 };
 
 function normalized(text: string) {
-  return text.replace(/[၀-၉]/g, (digit) => String("၀၁၂၃၄၅၆၇၈၉".indexOf(digit))).replace(/,/g, "");
+  return convertBurmeseDigits(text).replace(/,/g, "");
 }
 
 function firstMatch(text: string, patterns: RegExp[]) {

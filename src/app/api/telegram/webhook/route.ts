@@ -1,14 +1,22 @@
-import { prisma } from "@/lib/prisma";
-import { Prisma } from "@/generated/prisma/client";
+import {
+  prisma,
+} from '@/lib/prisma';
+import {
+  Prisma,
+} from '@/generated/prisma/client';
 import * as XLSX from "xlsx";
 import {
   answerQuestionWithGemini,
   isFileTooLarge,
   isSpreadsheetFile,
   type ParsedDemandRecord,
-} from "@/lib/demand-parser";
-import { analyzeDemandRecord } from "@/lib/demand-analysis";
-import { parseCommerceMessageWithGemini } from "@/lib/commerce-parser";
+} from '@/lib/demand-parser';
+import {
+  analyzeDemandRecord,
+} from '@/lib/demand-analysis';
+import {
+  parseCommerceMessageWithGemini,
+} from '@/lib/commerce-parser';
 import {
   createCustomerServiceRecordsFromRows,
   createMarketingMetricsFromRows,
@@ -28,294 +36,67 @@ import {
   type ParsedMarketingRow,
   type ParsedProductRow,
   type ParsedSalesOrderRow,
-} from "@/lib/commerce-import";
-import { NextRequest, NextResponse, after } from "next/server";
-import { sendOTPEmail } from "@/lib/email";
-import { notDeleted, restoreData } from "@/lib/soft-delete";
-import { formatPhoneNumber } from "@/lib/utils";
-import type { TelegramSender } from "@/generated/prisma/client";
+} from '@/lib/commerce-import';
+import {
+  NextRequest,
+  NextResponse,
+  after,
+} from 'next/server';
+import {
+  sendOTPEmail,
+} from '@/lib/email';
+import {
+  notDeleted,
+  restoreData,
+} from '@/lib/soft-delete';
+import {
+  formatPhoneNumber,
+} from '@/lib/utils';
+import {
+  isCommerceReportMode,
+  buildFormatInlineButtons,
+  buildMainMenuButtons,
+  getDepartmentForMode,
+  getDepartmentNameBurmese,
+  getFormatPrompt,
+  getCustomerServiceFormatPrompt,
+  getFinanceTransactionsFormatPrompt,
+  getInventoryImportFormatPrompt,
+  getMarketingImportFormatPrompt,
+  getFormatPromptForMode,
+  getFormatHintFooter,
+  getCopyPasteTemplateForMode,
+  escapeHtml,
+} from '@/lib/telegram/templates';
+import {
+  sendTelegramMessage,
+  answerCallbackQuery,
+  editTelegramMessage,
+  downloadTelegramFile,
+  getFileInfoFromMessage,
+} from '@/lib/telegram/client';
+import {
+  displayNameFromTelegramUser,
+  normalizeCustomerName,
+  isPrismaUniqueConstraintError,
+  createTelegramMessageIfNew,
+  getActiveBotSettings,
+  upsertSender,
+} from '@/lib/telegram/senders';
+import type {
+  TelegramSender,
+} from '@/generated/prisma/client';
 import {
   createFinanceRecord,
   isFinanceRecordsHeaders,
   parseFinanceRecordsSpreadsheet,
   parseFinanceTextRecord,
   type FinanceRecord,
-} from "@/lib/finance-import";
-import { fingerprintImportRows, sha256Hex } from "@/lib/data-import";
-
-const COMMERCE_REPORT_MODES = ["demand_report", "customer_service", "finance_transactions", "inventory_import", "marketing_import"] as const;
-
-function isCommerceReportMode(mode: string | null | undefined) {
-  return !!mode && COMMERCE_REPORT_MODES.includes(mode as (typeof COMMERCE_REPORT_MODES)[number]);
-}
-
-function displayNameFromTelegramUser(from: { first_name?: string; last_name?: string }) {
-  return [from.first_name, from.last_name].filter(Boolean).join(" ");
-}
-
-function normalizeCustomerName(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-function isPrismaUniqueConstraintError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-}
-
-async function createTelegramMessageIfNew({
-  telegramMsgId,
-  text,
-  senderId,
-  chatId,
-  chatTitle,
-  receivedAt,
-}: {
-  telegramMsgId: number;
-  text: string;
-  senderId: string;
-  chatId: bigint;
-  chatTitle: string | null;
-  receivedAt: Date;
-}) {
-  try {
-    return await prisma.telegramMessage.create({
-      data: {
-        telegramMsgId,
-        text,
-        senderId,
-        chatId,
-        chatTitle,
-        receivedAt,
-      },
-    });
-  } catch (error) {
-    if (isPrismaUniqueConstraintError(error)) {
-      console.info(`Duplicate Telegram message ignored: ${telegramMsgId}`);
-      return null;
-    }
-    throw error;
-  }
-}
-
-async function getActiveBotSettings(req: NextRequest) {
-  const secret = req.headers.get('x-telegram-bot-api-secret-token');
-  if (!secret) return null;
-
-  // Each configured bot has a distinct Telegram webhook secret. Never fall
-  // back to an arbitrary active bot: a request without a valid secret is not
-  // a Telegram webhook request.
-  return prisma.botSettings.findFirst({
-    where: { isActive: true, webhookSecret: secret },
-    select: {
-      userId: true,
-      botToken: true,
-      geminiApiKey: true,
-      geminiModel: true,
-    },
-  });
-}
-
-async function sendTelegramMessage({
-  botToken,
-  chatId,
-  text,
-  replyMarkup,
-}: {
-  botToken: string | null | undefined;
-  chatId: bigint | number;
-  text: string;
-  replyMarkup?: Record<string, unknown>;
-}): Promise<{ message_id: number } | null> {
-  if (!botToken) return null;
-
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId.toString(),
-        text,
-        parse_mode: "HTML",
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-      }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.ok ? data.result : null;
-  } catch (err) {
-    console.error("Error sending Telegram message:", err);
-    return null;
-  }
-}
-
-async function answerCallbackQuery(botToken: string | null | undefined, callbackQueryId: string, text: string) {
-  if (!botToken) return;
-  await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
-  }).catch((err) => console.error("Error answering callback:", err));
-}
-
-async function editTelegramMessage({
-  botToken,
-  chatId,
-  messageId,
-  text,
-  replyMarkup,
-}: {
-  botToken: string | null | undefined;
-  chatId: bigint | number;
-  messageId: number;
-  text: string;
-  replyMarkup?: Record<string, unknown>;
-}) {
-  if (!botToken) return;
-  await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId.toString(),
-      message_id: messageId,
-      text,
-      parse_mode: "HTML",
-      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-    }),
-  }).catch((err) => console.error("Error editing message:", err));
-}
-
-async function downloadTelegramFile(
-  botToken: string,
-  fileId: string,
-): Promise<{ buffer: Buffer; filePath: string } | null> {
-  try {
-    const fileRes = await fetch(
-      `https://api.telegram.org/bot${botToken}/getFile`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file_id: fileId }),
-      },
-    );
-    const fileData = await fileRes.json();
-    if (!fileData.ok || !fileData.result?.file_path) return null;
-
-    const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${fileData.result.file_path}`;
-    const downloadRes = await fetch(downloadUrl);
-    if (!downloadRes.ok) return null;
-
-    const arrayBuffer = await downloadRes.arrayBuffer();
-    return {
-      buffer: Buffer.from(arrayBuffer),
-      filePath: fileData.result.file_path as string,
-    };
-  } catch (err) {
-    console.error('Error downloading Telegram file:', err);
-    return null;
-  }
-}
-
-function getFileInfoFromMessage(message: Record<string, unknown>): {
-  fileId: string;
-  fileName: string;
-  mimeType: string;
-  fileSize: number;
-} | null {
-  const doc = message.document as Record<string, unknown> | undefined;
-  if (doc) {
-    return {
-      fileId: doc.file_id as string,
-      fileName: (doc.file_name as string) || 'document',
-      mimeType: (doc.mime_type as string) || 'application/octet-stream',
-      fileSize: (doc.file_size as number) || 0,
-    };
-  }
-
-  const photos = message.photo as Array<Record<string, unknown>> | undefined;
-  if (photos && photos.length > 0) {
-    const largest = photos[photos.length - 1];
-    return {
-      fileId: largest.file_id as string,
-      fileName: 'photo.jpg',
-      mimeType: 'image/jpeg',
-      fileSize: (largest.file_size as number) || 0,
-    };
-  }
-
-  const audio = message.audio as Record<string, unknown> | undefined;
-  if (audio) {
-    return {
-      fileId: audio.file_id as string,
-      fileName: (audio.file_name as string) || 'audio',
-      mimeType: (audio.mime_type as string) || 'audio/mpeg',
-      fileSize: (audio.file_size as number) || 0,
-    };
-  }
-
-  const voice = message.voice as Record<string, unknown> | undefined;
-  if (voice) {
-    return {
-      fileId: voice.file_id as string,
-      fileName: 'voice.ogg',
-      mimeType: (voice.mime_type as string) || 'audio/ogg',
-      fileSize: (voice.file_size as number) || 0,
-    };
-  }
-
-  const video = message.video as Record<string, unknown> | undefined;
-  if (video) {
-    return {
-      fileId: video.file_id as string,
-      fileName: (video.file_name as string) || 'video.mp4',
-      mimeType: (video.mime_type as string) || 'video/mp4',
-      fileSize: (video.file_size as number) || 0,
-    };
-  }
-
-  return null;
-}
-
-async function upsertSender(from: {
-  id: number;
-  first_name?: string;
-  last_name?: string;
-  username?: string;
-}, ownerUserId: string | null | undefined) {
-  const displayName = displayNameFromTelegramUser(from);
-
-  const existing = await prisma.telegramSender.findFirst({
-    where: {
-      telegramUserId: BigInt(from.id),
-      userId: ownerUserId || null,
-    },
-  });
-
-  if (!existing) {
-    return prisma.telegramSender.create({
-      data: {
-        telegramUserId: BigInt(from.id),
-        firstName: from.first_name || "Unknown",
-        lastName: from.last_name || null,
-        username: from.username || null,
-        displayName: displayName || "Unknown",
-        messageCount: 0,
-        lastMessageAt: null,
-        activeReportType: 'none',
-        userId: ownerUserId || null,
-      },
-    });
-  }
-
-  return prisma.telegramSender.update({
-    where: { id: existing.id },
-    data: {
-      firstName: from.first_name || "Unknown",
-      lastName: from.last_name || null,
-      username: from.username || null,
-      displayName: displayName || "Unknown",
-      ...(ownerUserId ? { userId: ownerUserId } : {}),
-    },
-  });
-}
+} from '@/lib/finance-import';
+import {
+  fingerprintImportRows,
+  sha256Hex,
+} from '@/lib/data-import';
 
 const MAIN_MENU_BUTTONS = {
   inline_keyboard: [
@@ -342,121 +123,6 @@ const KEYBOARD_LINKED = {
   resize_keyboard: true,
   one_time_keyboard: false
 };
-
-function getPlainTemplateTextForMode(mode: string | null | undefined): string {
-  switch (mode) {
-    case 'customer_service':
-      return [
-        "Date:",
-        "Customer Name:",
-        "Company:",
-        "Phone:",
-        "Email:",
-        "Purchased Product:",
-        "Purchase Amount MMK:",
-        "Status:",
-        "Next Follow Up:",
-        "CSAT:",
-        "Last Contact Note:",
-      ].join("\n");
-    case 'finance_transactions':
-      return [
-        "Date:",
-        "Description:",
-        "Category:",
-        "Type:",
-        "Amount (MMK):",
-        "Payment Method:",
-        "Reference:",
-        "Notes:",
-      ].join("\n");
-    case 'inventory_import':
-      return [
-        "Product Code:",
-        "Product Name:",
-        "Category:",
-        "Unit Cost:",
-        "Selling Price:",
-        "Stock Qty:",
-        "Low Stock Threshold:",
-      ].join("\n");
-    case 'marketing_import':
-      return [
-        "Date:",
-        "Channel:",
-        "Spend:",
-        "Reach:",
-        "Impressions:",
-        "Ad-driven Orders:",
-        "Notes:",
-      ].join("\n");
-    case 'demand_report':
-    default:
-      return [
-        "Date:",
-        "Customer Name:",
-        "Phone:",
-        "Product Name:",
-        "Product Code:",
-        "Quantity:",
-        "Unit Price:",
-        "Note:",
-      ].join("\n");
-  }
-}
-
-function buildFormatInlineButtons(mode: string | null | undefined) {
-  return {
-    inline_keyboard: [
-      [
-        { text: "📋 Template ကူးယူရန်", copy_text: { text: getPlainTemplateTextForMode(mode) } },
-        { text: "↩️ Main Menu", callback_data: "action:menu" },
-      ],
-    ],
-  };
-}
-
-function buildMainMenuButtons(allowedDepartments: string[]) {
-  const buttons: { text: string; callback_data: string }[][] = [];
-  const row1: { text: string; callback_data: string }[] = [];
-  const row2: { text: string; callback_data: string }[] = [];
-  const row3: { text: string; callback_data: string }[] = [];
-  const row4: { text: string; callback_data: string }[] = [];
-
-  if (allowedDepartments.includes('QA')) {
-    row1.push({ text: "🤖 Q&A မေးမြန်း", callback_data: "mode:qa" });
-  }
-  if (allowedDepartments.includes('Sales')) {
-    row1.push({ text: "📈 Sales Orders", callback_data: "mode:demand_report" });
-    row2.push({ text: "🎧 Customer Service", callback_data: "mode:customer_service" });
-    row3.push({ text: "📦 Inventory / Products", callback_data: "mode:inventory_import" });
-    row4.push({ text: "📣 Marketing Metrics", callback_data: "mode:marketing_import" });
-  }
-  if (allowedDepartments.includes('Finance')) {
-    row2.push({ text: "💳 Finance Transactions", callback_data: "mode:finance_transactions" });
-  }
-
-  if (row1.length) buttons.push(row1);
-  if (row2.length) buttons.push(row2);
-  if (row3.length) buttons.push(row3);
-  if (row4.length) buttons.push(row4);
-
-  return { inline_keyboard: buttons };
-}
-
-function getDepartmentForMode(mode: string): string | null {
-  if (mode === 'demand_report' || mode === 'customer_service' || mode === 'inventory_import' || mode === 'marketing_import') return 'Sales';
-  if (mode === 'finance_transactions') return 'Finance';
-  if (mode === 'qa') return 'QA';
-  return null;
-}
-
-function getDepartmentNameBurmese(dep: string): string {
-  if (dep === 'Sales') return 'Sales & Marketing (အရောင်းနှင့်စျေးကွက်)';
-  if (dep === 'Finance') return 'Finance & Operations (ဘဏ္ဍာရေးနှင့် လုပ်ငန်းဆောင်ရွက်မှု)';
-  if (dep === 'QA') return 'QA / Support (အမေးအဖြေ)';
-  return dep;
-}
 
 async function sendNoPermissionPrompt(
   botToken: string | null | undefined,
@@ -572,310 +238,11 @@ async function sendPickModePrompt(
   });
 }
 
-function getFormatPrompt(): string {
-  return [
-    "📈 ━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "  <b>Sales Orders Mode</b>",
-    "  <i>Order / lead မှတ်တမ်း</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
-    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
-    "",
-    "📝 <b>စာသားပုံစံ:</b>",
-    "<pre>",
-    "• Date: [YYYY-MM-DD]",
-    "• Customer Name: [နာမည်]",
-    "• Phone: [ဖုန်းနံပါတ်]",
-    "• Product Name: [ပစ္စည်းအမည်]",
-    "• Product Code: [SKU]",
-    "• Quantity: [အရေအတွက်]",
-    "• Unit Price: [တစ်ခုဈေး]",
-    "• Note: [မှတ်ချက်]",
-    "</pre>",
-    "",
-    "📊 <b>Excel columns:</b>",
-    "<pre>Date | Customer Name | Phone | Product Name | Product Code | Quantity | Unit Price | Stage | Fulfillment Status | Notes</pre>",
-    "",
-    "💡 <i>Stage: New Lead / Quoted / Pending / Won / Lost</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-  ].join("\n");
-}
-
-function getCustomerServiceFormatPrompt(): string {
-  return [
-    "🎧 ━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "  <b>Customer Service Mode</b>",
-    "  <i>ဝယ်ယူပြီး customer service / follow-up မှတ်တမ်း</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
-    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
-    "",
-    "📝 <b>စာသားပုံစံ:</b>",
-    "<pre>",
-    "• Date: [YYYY-MM-DD]",
-    "• Customer Name: [နာမည်]",
-    "• Company: [ကုမ္ပဏီအမည်]",
-    "• Phone: [ဖုန်းနံပါတ်]",
-    "• Email: [email]",
-    "• Purchased Product: [ဝယ်ယူထားသော ပစ္စည်း]",
-    "• Purchase Amount MMK: [ငွေ]",
-    "• Status: [active / pending / closed]",
-    "• Next Follow Up: [YYYY-MM-DD]",
-    "• CSAT: [အမှတ်]",
-    "• Last Contact Note: [မှတ်ချက်]",
-    "</pre>",
-    "",
-    "📊 <b>Excel columns:</b>",
-    "<pre>Date | Customer Name | Company | Phone | Email | Purchased Product | Purchase Amount (MMK) | Status | Next Follow Up | CSAT | Last Contact Note</pre>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-  ].join("\n");
-}
-
-function getFinanceTransactionsFormatPrompt(): string {
-  return [
-    "💳 ━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "  <b>Finance Transactions Mode</b>",
-    "  <i>ငွေဝင်/ငွေထွက် မှတ်တမ်း</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
-    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
-    "",
-    "📝 <b>စာသားပုံစံ:</b>",
-    "<pre>",
-    "• Date: [YYYY-MM-DD]",
-    "• Description: [အကြောင်းအရာ]",
-    "• Category: [အမျိုးအစား]",
-    "• Type: [Income / Expense]",
-    "• Amount (MMK): [ငွေပမာဏ]",
-    "• Payment Method: [Cash / Bank / KPay]",
-    "• Reference: [ရည်ညွှန်းနံပါတ်]",
-    "• Notes: [မှတ်ချက်]",
-    "</pre>",
-    "",
-    "📊 <b>Excel columns:</b>",
-    "<pre>Date | Description | Category | Type | Amount (MMK) | Payment Method | Reference | Notes</pre>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-  ].join("\n");
-}
-
-function getInventoryImportFormatPrompt(): string {
-  return [
-    "📦 ━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "  <b>Inventory / Products Mode</b>",
-    "  <i>Product Catalog / Stock တင်သွင်းခြင်း</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
-    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
-    "",
-    "📝 <b>စာသားပုံစံ:</b>",
-    "<pre>",
-    "• Product Code: [SKU]",
-    "• Product Name: [ပစ္စည်းအမည်]",
-    "• Category: [အမျိုးအစား]",
-    "• Unit Cost: [အရင်းဈေး]",
-    "• Selling Price: [ရောင်းဈေး]",
-    "• Stock Qty: [လက်ကျန်အရေအတွက်]",
-    "• Low Stock Threshold: [အနည်းဆုံးသတ်မှတ်]",
-    "</pre>",
-    "",
-    "📊 <b>Excel columns:</b>",
-    "<pre>Product Code | Product Name | Category | Unit Cost | Selling Price | Stock Qty | Low Stock Threshold</pre>",
-    "",
-    "💡 <i>Product Code (SKU) တူပါက အချက်အလက်အသစ်များဖြင့် update လုပ်ပါမည်။</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-  ].join("\n");
-}
-
-function getMarketingImportFormatPrompt(): string {
-  return [
-    "📣 ━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "  <b>Marketing Metrics Mode</b>",
-    "  <i>ကြော်ငြာစရိတ် / ရလဒ် တင်သွင်းခြင်း</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-    "",
-    "📄 စာသား <b>သို့မဟုတ်</b> Excel/CSV",
-    "    ဖိုင်ကို တိုက်ရိုက်ပို့နိုင်ပါသည်",
-    "",
-    "📝 <b>စာသားပုံစံ:</b>",
-    "<pre>",
-    "• Date: [YYYY-MM-DD]",
-    "• Channel: [Facebook / TikTok / Viber]",
-    "• Spend: [သုံးစွဲငွေ]",
-    "• Reach: [ထိတွေ့မှုအရေအတွက်]",
-    "• Impressions: [ကြော်ငြာပြသမှု]",
-    "• Ad-driven Orders: [ရရှိသော order]",
-    "• Notes: [မှတ်ချက်]",
-    "</pre>",
-    "",
-    "📊 <b>Excel columns:</b>",
-    "<pre>Date | Channel | Spend | Reach | Impressions | Ad-driven Orders | Notes</pre>",
-    "",
-    "💡 <i>Channel ဥပမာ - Facebook Ads၊ TikTok Ads၊ Viber</i>",
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-  ].join("\n");
-}
-
 // Return the full format guide for whatever report mode the sender is in.
-function getFormatPromptForMode(mode: string | null | undefined): string {
-  switch (mode) {
-    case 'customer_service':
-      return getCustomerServiceFormatPrompt();
-    case 'finance_transactions':
-      return getFinanceTransactionsFormatPrompt();
-    case 'demand_report':
-      return getFormatPrompt();
-    case 'inventory_import':
-      return getInventoryImportFormatPrompt();
-    case 'marketing_import':
-      return getMarketingImportFormatPrompt();
-    default:
-      return [
-        "🤖 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>Q&A Mode</b>",
-        "  <i>AI မေးမြန်းခြင်း</i>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "ပုံစံ (format) မလိုအပ်ပါ",
-        "သိရှိလိုသည်များကို တိုက်ရိုက်မေးပါ",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-      ].join("\n");
-  }
-}
 
 // A compact footer reminding the sender of the expected fields for the
 // current report mode. Appended to confirmation messages so users can see
 // what to include next time without re-opening the menu.
-function getFormatHintFooter(mode: string): string {
-  let fields = "";
-  if (mode === 'demand_report') {
-    fields = "Date • Customer Name • Phone • Product Name • Product Code • Quantity • Unit Price • Stage • Fulfillment Status • Note";
-  } else if (mode === 'customer_service') {
-    fields = "Date • Customer Name • Company • Phone • Email • Purchased Product • Purchase Amount MMK • Status • Next Follow Up • CSAT • Last Contact Note";
-  } else if (mode === 'finance_transactions') {
-    fields = "Date • Description • Category • Type • Amount (MMK) • Payment Method • Reference • Notes";
-  } else if (mode === 'inventory_import') {
-    fields = "Product Code • Product Name • Category • Unit Cost • Selling Price • Stock Qty • Low Stock Threshold";
-  } else if (mode === 'marketing_import') {
-    fields = "Date • Channel • Spend • Reach • Impressions • Ad-driven Orders • Notes";
-  }
-  return [
-    "",
-    "━━━━━━━━━━━━━━━━━━━━",
-    `💡 <i>${fields}</i>`,
-  ].join("\n");
-}
-
-function getCopyPasteTemplateForMode(mode: string | null | undefined): string {
-  switch (mode) {
-    case 'demand_report':
-      return [
-        "📈 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>Sales Orders Template</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "Excel Row 1 အတွက် -",
-        "<code>Date, Customer Name, Phone, Product Name, Product Code, Quantity, Unit Price, Stage, Fulfillment Status, Notes</code>",
-        "",
-        "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
-        "",
-        "<code>• Date: \n• Customer Name: \n• Phone: \n• Product Name: \n• Product Code: \n• Quantity: \n• Unit Price: \n• Note: </code>",
-      ].join("\n");
-    case 'customer_service':
-      return [
-        "🎧 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>Customer Service Template</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "Excel Row 1 အတွက် -",
-        "<code>Date, Customer Name, Company, Phone, Email, Purchased Product, Purchase Amount (MMK), Status, Next Follow Up, CSAT, Last Contact Note</code>",
-        "",
-        "စာသားပုံစံအတွက် ဖိနှိပ်၍ Copy ကူးယူပါ -",
-        "<code>• Date: \n• Customer Name: \n• Company: \n• Phone: \n• Email: \n• Purchased Product: \n• Purchase Amount MMK: \n• Status: \n• Next Follow Up: \n• CSAT: \n• Last Contact Note: </code>",
-      ].join("\n");
-    case 'finance_transactions':
-      return [
-        "💳 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>Finance Transactions Template</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "Excel Row 1 အတွက် -",
-        "<code>Date, Description, Category, Type, Amount (MMK), Payment Method, Reference, Notes</code>",
-        "",
-        "စာသားကို ဖိနှိပ်၍ Copy ကူးယူပါ -",
-        "",
-        "<code>• Date: \n• Description: \n• Category: \n• Type: \n• Amount (MMK): \n• Payment Method: \n• Reference: \n• Notes: </code>",
-      ].join("\n");
-    case 'inventory_import':
-      return [
-        "📦 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>Inventory / Products Template</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "Excel ရဲ့ ပထမဆုံး တစ်ကြောင်း (Row 1) မှာ ကူးထည့်ပါ -",
-        "",
-        "<code>Product Code, Product Name, Category, Unit Cost, Selling Price, Stock Qty, Low Stock Threshold</code>",
-        "",
-        "စာသားပုံစံအတွက် ဖိနှိပ်၍ Copy ကူးယူပါ -",
-        "<code>• Product Code: \n• Product Name: \n• Category: \n• Unit Cost: \n• Selling Price: \n• Stock Qty: \n• Low Stock Threshold: </code>",
-      ].join("\n");
-    case 'marketing_import':
-      return [
-        "📣 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>Marketing Metrics Template</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "Excel ရဲ့ ပထမဆုံး တစ်ကြောင်း (Row 1) မှာ ကူးထည့်ပါ -",
-        "",
-        "<code>Date, Channel, Spend, Reach, Impressions, Ad-driven Orders, Notes</code>",
-        "",
-        "စာသားပုံစံအတွက် ဖိနှိပ်၍ Copy ကူးယူပါ -",
-        "<code>• Date: \n• Channel: \n• Spend: \n• Reach: \n• Impressions: \n• Ad-driven Orders: \n• Notes: </code>",
-      ].join("\n");
-    default:
-      return [
-        "🤖 ━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "  <b>အဆင်သင့်မဖြစ်သေးပါ</b>",
-        "",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "Template ရယူရန် ဦးစွာ /menu မှ",
-        "ကဏ္ဍတစ်ခုကို ရွေးချယ်ပေးပါ။",
-      ].join("\n");
-  }
-}
 
 async function buildQAContext(ownerUserId: string): Promise<string> {
   // Fail closed: without an owner the queries below would drop their tenant
@@ -1156,14 +523,6 @@ async function resolveCustomersBatch(
   }
 
   return rawNameToId;
-}
-
-function escapeHtml(value: string | null | undefined): string {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 function serializeParsedDemand(record: ParsedDemandRecord) {

@@ -6,6 +6,9 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useDateFilter } from '@/hooks/use-date-filter';
 import {
+  useCustomers,
+} from "@/hooks/use-customers";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -76,15 +79,6 @@ const leadStatusColors: Record<string, string> = {
   pending: 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20',
   closed: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20',
 };
-
-function useCustomers(params: { search?: string; page?: number; limit?: number; status?: string; dateFrom?: string; dateTo?: string } = {}) {
-  return useQuery({
-    queryKey: ['customers', params],
-    queryFn: () => customersApi.list(params),
-    placeholderData: (prev) => prev,
-    refetchInterval: 10000,
-  });
-}
 
 function CustomersPageContent() {
   const router = useRouter();

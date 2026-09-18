@@ -4,14 +4,14 @@ import { Prisma } from "@/generated/prisma/client";
 import { DealStage, FulfillmentStatus } from "@/generated/prisma/enums";
 import type { DealStage as DealStageValue, FulfillmentStatus as FulfillmentStatusValue } from "@/generated/prisma/enums";
 import { parseExcelDate } from "@/lib/demand-parser";
+import { convertBurmeseDigits } from "@/lib/text-normalize";
 import { restoreData } from "@/lib/soft-delete";
 import { formatPhoneNumber } from "@/lib/utils";
 
 // ─── Header helpers ──────────────────────────────────────────────────────────
 
 function normalizeHeaderKey(value: unknown): string {
-  return String(value ?? "")
-    .replace(/[\u1040-\u1049]/g, (d) => String("၀၁၂၃၄၅၆၇၈၉".indexOf(d)))
+  return convertBurmeseDigits(String(value ?? ""))
     .trim()
     .toLowerCase()
     .replace(/[_-]+/g, " ")
@@ -73,17 +73,10 @@ export function isCustomerServiceHeaders(headers: unknown[]): boolean {
 
 // ─── Row parsing ─────────────────────────────────────────────────────────────
 
-const BURMESE_DIGIT_MAP: Record<string, string> = {
-  "\u1040": "0", "\u1041": "1", "\u1042": "2", "\u1043": "3", "\u1044": "4",
-  "\u1045": "5", "\u1046": "6", "\u1047": "7", "\u1048": "8", "\u1049": "9",
-};
-
 function toNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number" && Number.isFinite(value)) return value;
-  const cleaned = String(value)
-    .replace(/[\u1040-\u1049]/g, (d) => BURMESE_DIGIT_MAP[d] || d)
-    .replace(/,/g, "");
+  const cleaned = convertBurmeseDigits(String(value)).replace(/,/g, "");
   const n = Number(cleaned.replace(/[^\d.-]/g, ""));
   return Number.isFinite(n) ? n : null;
 }
@@ -219,9 +212,7 @@ export async function upsertProductsFromRows(
 // the catalog upserts by SKU — without it there is nothing to match.
 
 export function parseInventoryTextRecord(text: string): ParsedProductRow | null {
-  const cleaned = text
-    .replace(/[၀-၉]/g, (d) => BURMESE_DIGIT_MAP[d] ?? d)
-    .replace(/,/g, "");
+  const cleaned = convertBurmeseDigits(text).replace(/,/g, "");
   const field = (names: string[]) => {
     for (const name of names) {
       const match = cleaned.match(new RegExp(`${name}\\s*[:：]\\s*([^\\n]+)`, "i"));
@@ -352,9 +343,7 @@ export async function createMarketingMetricsFromRows(
 // messages so the caller can ask for the required fields instead.
 
 export function parseMarketingTextRecord(text: string, fallbackDate: Date): ParsedMarketingRow | null {
-  const cleaned = text
-    .replace(/[၀-၉]/g, (d) => BURMESE_DIGIT_MAP[d] ?? d)
-    .replace(/,/g, "");
+  const cleaned = convertBurmeseDigits(text).replace(/,/g, "");
   const field = (names: string[]) => {
     for (const name of names) {
       const match = cleaned.match(new RegExp(`${name}\\s*[:：]\\s*([^\\n]+)`, "i"));

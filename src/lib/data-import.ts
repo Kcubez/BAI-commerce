@@ -22,59 +22,17 @@ import {
 
 // ─── Web data import (dashboard file upload, Excel/CSV only) ─────────────────
 // Shared by POST /api/imports/preview and POST /api/imports/confirm.
+// Kind definitions live in `@/lib/import-kinds` (single source of truth,
+// re-exported here so existing `@/lib/data-import` imports keep working).
 
-export const DATA_IMPORT_KINDS = [
-  "sales_orders",
-  "customer_service",
-  "finance",
-  "product_catalog",
-  "marketing_metrics",
-] as const;
-
-export type DataImportKind = (typeof DATA_IMPORT_KINDS)[number];
-
-export function isDataImportKind(value: string | null | undefined): value is DataImportKind {
-  return (
-    value === "sales_orders" ||
-    value === "customer_service" ||
-    value === "finance" ||
-    value === "product_catalog" ||
-    value === "marketing_metrics"
-  );
-}
-
-export const DATA_IMPORT_META: Record<DataImportKind, { label: string; icon: string; description: string; columns: string[] }> = {
-  sales_orders: {
-    label: "Sales Orders",
-    icon: "🛒",
-    description: "Customer orders → Sales pipeline (deals + customers)",
-    columns: ["Date", "Customer Name", "Phone", "Product Name", "Product Code", "Quantity", "Unit Price", "Stage", "Fulfillment Status", "Notes"],
-  },
-  customer_service: {
-    label: "Customer Service",
-    icon: "🎧",
-    description: "Post-purchase follow-ups → Customer Service records",
-    columns: ["Date", "Customer Name", "Company", "Phone", "Email", "Purchased Product", "Purchase Amount (MMK)", "Status", "Next Follow Up", "CSAT", "Last Contact Note"],
-  },
-  finance: {
-    label: "Finance Transactions",
-    icon: "💳",
-    description: "Income / expense rows → Finance ledger + expenses",
-    columns: ["Date", "Description", "Category", "Type", "Amount (MMK)", "Payment Method", "Reference", "Notes"],
-  },
-  product_catalog: {
-    label: "Inventory / Products",
-    icon: "📦",
-    description: "Product catalog rows → Inventory (upsert by SKU)",
-    columns: ["Product Code", "Product Name", "Category", "Unit Cost", "Selling Price", "Stock Qty", "Low Stock Threshold"],
-  },
-  marketing_metrics: {
-    label: "Marketing Metrics",
-    icon: "📣",
-    description: "Ad spend / reach rows → Marketing metrics",
-    columns: ["Date", "Channel", "Spend", "Reach", "Impressions", "Ad-driven Orders", "Notes"],
-  },
-};
+export {
+  DATA_IMPORT_KINDS,
+  IMPORT_KIND_LIST,
+  IMPORT_KIND_META as DATA_IMPORT_META,
+  isDataImportKind,
+  type DataImportKind,
+} from "@/lib/import-kinds";
+import type { DataImportKind } from "@/lib/import-kinds";
 
 export type PreviewCell = string | number | null;
 export type PreviewRow = Record<string, PreviewCell>;

@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { prisma } from "@/lib/prisma";
 import { parseExcelDate } from "@/lib/demand-parser";
+import { convertBurmeseDigits } from "@/lib/text-normalize";
 import { findExistingImportKey, isPrismaUniqueConstraintError, restoreImportKey } from "@/lib/commerce-import";
 import { ExpenseCategory, type ExpenseCategory as ExpenseCategoryValue } from "@/generated/prisma/enums";
 
@@ -54,7 +55,7 @@ export function normalizeAccountingType(value: string | null | undefined, cashTy
 }
 
 export function parseFinanceTextRecord(text: string, fallbackDate: Date): FinanceRecord {
-  const cleaned = text.replace(/[၀-၉]/g, (digit) => String("၀၁၂၃၄၅၆၇၈၉".indexOf(digit))).replace(/,/g, "");
+  const cleaned = convertBurmeseDigits(text).replace(/,/g, "");
   const field = (names: string[]) => {
     for (const name of names) {
       const match = cleaned.match(new RegExp(`${name}\\s*[:：]\\s*([^\\n]+)`, "i"));
@@ -245,13 +246,7 @@ export function parseFinanceRecordsSpreadsheet(fileBuffer: Buffer): FinanceRecor
 
       let amount = 0;
       if (amountVal != null) {
-        const clean = String(amountVal).replace(/[\u1040-\u1049]/g, (d) => {
-          const digits: Record<string, string> = {
-            '\u1040': '0', '\u1041': '1', '\u1042': '2', '\u1043': '3', '\u1044': '4',
-            '\u1045': '5', '\u1046': '6', '\u1047': '7', '\u1048': '8', '\u1049': '9',
-          };
-          return digits[d] || d;
-        }).replace(/,/g, '');
+        const clean = convertBurmeseDigits(String(amountVal)).replace(/,/g, '');
         const n = parseFloat(clean);
         if (!isNaN(n)) amount = n;
       }

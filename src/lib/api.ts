@@ -1,5 +1,7 @@
 // ─── API helper ─────────────────────────────────────────────────────────────
 
+import { IMPORT_KIND_LIST, type DataImportKind } from "@/lib/import-kinds";
+
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -962,63 +964,20 @@ export const productsApi = {
 };
 
 // ─── Web Data Import API ─────────────────────────────────────────────────────
-// Client-safe mirror of the server import kinds (no xlsx import here — this
-// module ships to the browser).
+// Import kinds live in `@/lib/import-kinds` (single source of truth shared
+// with the server). The `DataImportType` / `DATA_IMPORT_TYPES` names are kept
+// as aliases so existing imports keep working.
 
-export type DataImportType =
-  | "sales_orders"
-  | "customer_service"
-  | "finance"
-  | "product_catalog"
-  | "marketing_metrics";
-
-export type DataImportTypeMeta = {
-  value: DataImportType;
-  label: string;
-  description: string;
-  columns: string[];
-};
-
-export const DATA_IMPORT_TYPES: DataImportTypeMeta[] = [
-  {
-    value: "sales_orders",
-    label: "Sales Orders",
-    description: "Customer orders → Sales pipeline (deals + customers)",
-    columns: ["Date", "Customer Name", "Phone", "Product Name", "Product Code", "Quantity", "Unit Price", "Stage", "Fulfillment Status", "Notes"],
-  },
-  {
-    value: "customer_service",
-    label: "Customer Service",
-    description: "Post-purchase follow-ups → Customer Service records",
-    columns: ["Date", "Customer Name", "Company", "Phone", "Email", "Purchased Product", "Purchase Amount (MMK)", "Status", "Next Follow Up", "CSAT", "Last Contact Note"],
-  },
-  {
-    value: "finance",
-    label: "Finance Transactions",
-    description: "Income / expense rows → Finance ledger + expenses",
-    columns: ["Date", "Description", "Category", "Type", "Amount (MMK)", "Payment Method", "Reference", "Notes"],
-  },
-  {
-    value: "product_catalog",
-    label: "Inventory / Products",
-    description: "Product catalog rows → Inventory (upsert by SKU)",
-    columns: ["Product Code", "Product Name", "Category", "Unit Cost", "Selling Price", "Stock Qty", "Low Stock Threshold"],
-  },
-  {
-    value: "marketing_metrics",
-    label: "Marketing Metrics",
-    description: "Ad spend / reach rows → Marketing metrics",
-    columns: ["Date", "Channel", "Spend", "Reach", "Impressions", "Ad-driven Orders", "Notes"],
-  },
-];
+export type { DataImportKind as DataImportType, ImportKindMeta as DataImportTypeMeta } from "@/lib/import-kinds";
+export { IMPORT_KIND_LIST as DATA_IMPORT_TYPES } from "@/lib/import-kinds";
 
 export type ImportPreviewRow = Record<string, string | number | null>;
 
 export type ImportPreviewResponse = {
   fileName: string;
   fileHash: string;
-  detectedType: DataImportType | null;
-  importType: DataImportType;
+  detectedType: DataImportKind | null;
+  importType: DataImportKind;
   rowCount: number;
   truncated: boolean;
   columns: string[];
@@ -1027,7 +986,7 @@ export type ImportPreviewResponse = {
 
 export type ImportConfirmResponse = {
   fileName: string;
-  importType: DataImportType;
+  importType: DataImportKind;
   rowCount: number;
   importedCount: number;
   skippedCount: number;
@@ -1051,12 +1010,12 @@ async function postImportForm<T>(url: string, formData: FormData): Promise<T> {
 }
 
 export const importsApi = {
-  preview: (file: File, type?: DataImportType | "auto") => {
+  preview: (file: File, type?: DataImportKind | "auto") => {
     const formData = new FormData();
     formData.append("file", file);
     if (type && type !== "auto") formData.append("type", type);
     return postImportForm<ImportPreviewResponse>("/api/imports/preview", formData);
-  },  confirm: (file: File, type: DataImportType, excludedIndices: number[], fileHash?: string) => {
+  },  confirm: (file: File, type: DataImportKind, excludedIndices: number[], fileHash?: string) => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("type", type);
@@ -1064,8 +1023,8 @@ export const importsApi = {
     if (fileHash) formData.append("fileHash", fileHash);
     return postImportForm<ImportConfirmResponse>("/api/imports/confirm", formData);
   },
-  templateCsv: (type: DataImportType) => {
-    const meta = DATA_IMPORT_TYPES.find((t) => t.value === type);
+  templateCsv: (type: DataImportKind) => {
+    const meta = IMPORT_KIND_LIST.find((t) => t.value === type);
     if (!meta) return "";
     const lines = [meta.columns.map(escapeCsvCell).join(",")];
     for (const row of TEMPLATE_EXAMPLE_ROWS[type] ?? []) {
@@ -1086,7 +1045,7 @@ function escapeCsvCell(value: string | number): string {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export const TEMPLATE_EXAMPLE_ROWS: Record<DataImportType, (string | number)[][]> = {
+export const TEMPLATE_EXAMPLE_ROWS: Record<DataImportKind, (string | number)[][]> = {
   sales_orders: [
     ["2026-08-05", "Aung Khant Min", "09781234567", "ThinkPad E14 Gen 5", "SKU-LAP-101", 2, 2350000, "Won", "Fulfilled", "Paid in full via KBZPay"],
     ["2026-08-12", "Su Wai Phyo", "09965432109", "1TB NVMe SSD", "SKU-SSD-201", 5, 185000, "Quoted", "Pending", "Waiting for customer confirmation"],
