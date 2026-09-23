@@ -245,7 +245,7 @@ export function CommerceLineChart({ data }: { data: { label: string; value: numb
         <line x1={chartLeft} y1={chartBottom} x2={chartRight} y2={chartBottom} stroke="#cbd5e1" strokeWidth="1.5" className="dark:stroke-slate-700" />
         {labels.map((label, index) => {
           const x = chartLeft + (index / divisor) * chartWidth;
-          const shouldShowLabel = labels.length <= 15 || index === 0 || index === labels.length - 1 || index % Math.ceil(labels.length / 10) === 0;
+          const shouldShowLabel = labels.length <= 31 || index === 0 || index === labels.length - 1 || index % Math.ceil(labels.length / 10) === 0;
           return (
             <g key={`${label}-${index}`}>
               <line x1={x} y1={chartBottom} x2={x} y2={chartBottom + 4} stroke="#cbd5e1" strokeWidth="1" className="dark:stroke-slate-700" />
@@ -346,7 +346,7 @@ export function CommerceBarChart({ data }: { data: { label: string; value: numbe
         })}
         {(data.length ? data : Array.from({ length: 12 }, (_, index) => ({ label: String(index + 1), value: 0 }))).map((point, index) => {
           const x = chartLeft + index * slotWidth + slotWidth / 2;
-          const shouldShow = data.length <= 15 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 10) === 0;
+          const shouldShow = data.length <= 31 || index === 0 || index === data.length - 1 || index % Math.ceil(data.length / 10) === 0;
           return shouldShow ? (
             <text key={`${point.label}-${index}`} x={x} y="207" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" style={{ fontSize: '8.5px', fontFamily: "'Inter', sans-serif" }}>
               {point.label}
@@ -487,7 +487,7 @@ export function MarketingPerformanceChart({ weekly }: { weekly: readonly (readon
   // a sparse subset (first / last / every Nth) so long ranges stay readable.
   const points: readonly (readonly [string, number, number])[] = weekly;
   const showTick = (index: number) =>
-    points.length <= 15 ||
+    points.length <= 31 ||
     index === 0 ||
     index === points.length - 1 ||
     index % Math.ceil(points.length / 10) === 0;

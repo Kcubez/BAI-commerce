@@ -668,11 +668,11 @@ function CustomersPageContent() {
         </div>
       )}
 
-      {/* 1. Purchased Customers Directory Card */}
+      {/* 1. Purchase Records Card */}
       <Card className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <CardTitle className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">
-            1. Purchased Customers Directory
+            1. Purchase Records
           </CardTitle>
           <div className="flex items-center gap-3 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-initial">

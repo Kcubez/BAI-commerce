@@ -150,12 +150,12 @@ function CustomerRanking({ title, items, loading, accent }: { title: string; ite
 }
 
 export function CustomerServiceView({ params, dateFrom, dateTo }: { params: CommerceDashboardParams; dateFrom: string; dateTo: string }) {
-  // Purchased Customers Directory state
+  // Purchase Records (aggregated per customer) state
   const [customerSearch, setCustomerSearch] = useState('');
   const [debouncedCustomerSearch, setDebouncedCustomerSearch] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
 
-  // Purchase Records state
+  // Follow-Up / Customer Behavior records state
   const [recordSearch, setRecordSearch] = useState('');
   const [debouncedRecordSearch, setDebouncedRecordSearch] = useState('');
   const [followUpFilter, setFollowUpFilter] = useState('all');
@@ -541,10 +541,10 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
         )}
       </Card>
 
-      {/* 1. Purchased Customers Directory Card */}
+      {/* 1. Purchase Records Card */}
       <Card className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <CardTitle className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">1. Purchased Customers Directory</CardTitle>
+          <CardTitle className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">1. Purchase Records</CardTitle>
           <div className="flex items-center gap-3 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-initial">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -666,10 +666,10 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
         )}
       </Card>
 
-      {/* 2. Purchase Records Data Card */}
+      {/* 2. Follow-Up / Customer Behavior Card */}
       <Card id="commerce-purchase-records-section" className="bg-card border-2 border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <CardTitle className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">2. Purchase Records Data</CardTitle>
+          <CardTitle className="text-lg font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wide">2. Follow-Up / Customer Behavior</CardTitle>
           <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
             <Select value={followUpFilter} onValueChange={(value) => setFollowUpFilter(value || 'all')}>
               <SelectTrigger className="h-10 w-40 rounded-lg border border-border bg-card text-xs font-bold text-slate-800 dark:text-slate-200">
@@ -684,7 +684,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
             <div className="relative flex-1 sm:flex-initial">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
               <Input
-                placeholder="Search purchase records..."
+                placeholder="Search follow-ups..."
                 value={recordSearch}
                 onChange={(e) => setRecordSearch(e.target.value)}
                 className="pl-9 bg-muted/50 border-border text-foreground placeholder:text-muted-foreground w-full sm:w-60 focus-visible:ring-ring"
@@ -692,7 +692,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
             </div>
             <Button onClick={openCreateLead} className="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 h-10 text-xs font-bold transition-all shrink-0 cursor-pointer">
               <Plus className="w-4 h-4 mr-1.5" />
-              Add Purchase
+              Add Follow-Up
             </Button>
           </div>
         </div>
@@ -704,7 +704,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                   <th className="px-6 py-4 text-left font-extrabold">Purchase Date</th>
                   <th className="px-6 py-4 text-left font-extrabold">Customer Name</th>
                   <th className="px-6 py-4 text-left font-extrabold">Source Channel</th>
-                  <th className="px-6 py-4 text-left font-extrabold">Purchased Product</th>
+                  <th className="px-6 py-4 text-left font-extrabold">Interested Product</th>
                   <th className="px-6 py-4 text-left font-extrabold">Contact</th>
                   <th className="px-6 py-4 text-center font-extrabold">Potential</th>
                   <th className="px-6 py-4 text-center font-extrabold">Status</th>
@@ -783,7 +783,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                   })
                 ) : (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center text-sm text-slate-500">No purchase records found.</td>
+                    <td colSpan={8} className="px-6 py-12 text-center text-sm text-slate-500">No follow-up records found.</td>
                   </tr>
                 )}
               </tbody>
@@ -885,7 +885,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
         <ModalPortal className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-200 p-4">
           <form onSubmit={handleSaveLead} className="bg-card border border-border w-full max-w-lg rounded-lg overflow-hidden shadow-lg animate-in zoom-in-95 duration-200 text-foreground">
             <div className="flex justify-between items-center border-b border-border p-6 pb-4">
-              <h3 className="text-lg font-bold text-foreground">{editingLead ? 'Edit Purchase Record' : 'Add Purchase Record'}</h3>
+              <h3 className="text-lg font-bold text-foreground">{editingLead ? 'Edit Follow-Up Record' : 'Add Follow-Up Record'}</h3>
               <button
                 type="button"
                 onClick={() => {
@@ -912,7 +912,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
                   <Input value={leadForm.customerCompany} onChange={(e) => setLeadForm({ ...leadForm, customerCompany: e.target.value })} placeholder="e.g. Mandalay Retail" className="bg-muted/35 border-border text-foreground" />
                 </div>
                 <div className="space-y-1.5 col-span-2">
-                  <label className="text-xs font-semibold uppercase text-muted-foreground">Purchased Product</label>
+                  <label className="text-xs font-semibold uppercase text-muted-foreground">Interested Product</label>
                   <Input value={leadForm.productName} onChange={(e) => setLeadForm({ ...leadForm, productName: e.target.value })} placeholder="e.g. iPhone 15 Case Bundle" className="bg-muted/35 border-border text-foreground" />
                 </div>
                 <div className="space-y-1.5">
@@ -958,7 +958,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
               </Button>
               <Button type="submit" disabled={createLeadMutation.isPending || updateLeadMutation.isPending} className="bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 font-bold shrink-0 cursor-pointer">
                 {(createLeadMutation.isPending || updateLeadMutation.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin shrink-0" />}
-                Save Purchase
+                Save Follow-Up
               </Button>
             </div>
           </form>
@@ -1003,7 +1003,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
         </AlertDialog>
       )}
 
-      {/* Delete Single Purchase Record Confirmation */}
+      {/* Delete Single Follow-Up Record Confirmation */}
       {leadToDelete && (
         <AlertDialog
           open={!!leadToDelete}
@@ -1017,7 +1017,7 @@ export function CustomerServiceView({ params, dateFrom, dateTo }: { params: Comm
           <AlertDialogContent className="bg-card border-border text-foreground">
             <AlertDialogHeader>
               <AlertDialogTitle>Delete Record for {leadToDelete.customerName || 'Unknown'}?</AlertDialogTitle>
-              <AlertDialogDescription className="text-muted-foreground">This will move this purchase record to Trash. Admins can restore it later.</AlertDialogDescription>
+              <AlertDialogDescription className="text-muted-foreground">This will move this follow-up record to Trash. Admins can restore it later.</AlertDialogDescription>
             </AlertDialogHeader>
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground">Type confirm to move this record to Trash</label>

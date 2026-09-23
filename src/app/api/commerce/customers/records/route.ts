@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { RECORD_STATUS_TO_STAGE, resolveRecordCustomer, serializeRecord } from "./shared";
 
 /**
- * Row-level purchase ledger for the Customers tab ("2. Purchase Records Data").
+ * Row-level follow-up ledger for the Customers tab ("2. Follow-Up / Customer Behavior").
  * Reads Deals — the same records produced by sales-order and customer-service
  * imports — so every imported purchase appears alongside manual entries.
  */

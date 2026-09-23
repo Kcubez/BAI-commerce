@@ -12,7 +12,7 @@ function dealTotal(deal: { quotedAmount: number | null; items: { quantity: numbe
 }
 
 /**
- * Commerce customer directory (BAI-service "Purchased Customers Directory").
+ * Commerce customer directory (BAI-service "1. Purchase Records").
  * Purchase aggregates come from WON deals in the selected period, while the
  * customer entity itself is shared with /api/customers.
  */
